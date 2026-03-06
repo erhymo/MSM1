@@ -1,0 +1,55 @@
+import type { AnalysisResult, SignalType } from "@/lib/types/analysis";
+
+export const SIGNAL_LABELS: Record<SignalType, string> = {
+  STRONG_BUY: "Strong Buy",
+  BUY: "Buy",
+  WAIT: "Wait",
+  HOLD: "Hold",
+  SELL: "Sell",
+  STRONG_SELL: "Strong Sell",
+  NO_TRADE: "No Trade",
+};
+
+const SIGNAL_SORT_PRIORITY: Record<SignalType, number> = {
+  STRONG_BUY: 0,
+  BUY: 1,
+  HOLD: 2,
+  WAIT: 3,
+  NO_TRADE: 4,
+  SELL: 5,
+  STRONG_SELL: 6,
+};
+
+export function formatPercent(value: number, digits = 0) {
+  return `${value.toFixed(digits)}%`;
+}
+
+export function formatPrice(value: number) {
+  if (value >= 100) return value.toFixed(2);
+  if (value >= 10) return value.toFixed(3);
+  return value.toFixed(4);
+}
+
+export function formatRelativeTime(isoDate: string) {
+  const diffMs = Date.now() - new Date(isoDate).getTime();
+  const diffMinutes = Math.max(1, Math.round(diffMs / 60000));
+
+  if (diffMinutes < 60) return `${diffMinutes}m ago`;
+
+  const diffHours = Math.round(diffMinutes / 60);
+  if (diffHours < 24) return `${diffHours}h ago`;
+
+  const diffDays = Math.round(diffHours / 24);
+  return `${diffDays}d ago`;
+}
+
+export function compareAnalysisResults(a: AnalysisResult, b: AnalysisResult) {
+  const signalPriority = SIGNAL_SORT_PRIORITY[a.signal] - SIGNAL_SORT_PRIORITY[b.signal];
+  if (signalPriority !== 0) return signalPriority;
+
+  const directionalScoreDiff = Math.abs(b.score) - Math.abs(a.score);
+  if (directionalScoreDiff !== 0) return directionalScoreDiff;
+
+  if (b.confidence !== a.confidence) return b.confidence - a.confidence;
+  return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+}

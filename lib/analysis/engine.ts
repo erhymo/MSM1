@@ -1,0 +1,347 @@
+import "server-only";
+
+import { aiSummaryService } from "@/lib/ai/summary";
+import { computeAnalysis } from "@/lib/analysis/scoring";
+import { firestoreAnalysisConfig, firestoreCollections } from "@/lib/config/firestore";
+import { instruments } from "@/lib/config/instruments";
+import { adminDb } from "@/lib/firebase/admin";
+import { getDashboardSnapshotFromFirestore, seedFirestoreAnalysisStore } from "@/lib/firebase/firestore-analysis-service";
+import { writeSystemLog } from "@/lib/firebase/firestore-system-log-service";
+import { cotProviderConfig } from "@/lib/providers/cot/config";
+import { cotProvider } from "@/lib/providers/cot/provider";
+import { mockVolatilityProvider } from "@/lib/providers/mock/volatility-provider";
+import { priceProviderConfig } from "@/lib/providers/price/config";
+import { priceProvider } from "@/lib/providers/price/provider";
+import { sentimentProviderConfig } from "@/lib/providers/sentiment/config";
+import { sentimentProvider } from "@/lib/providers/sentiment/provider";
+import type { AnalysisResult, COTSnapshot, DashboardSnapshot, Instrument, PriceSnapshot, SentimentSnapshot, SystemStatusItem, VolatilitySnapshot } from "@/lib/types/analysis";
+import type { FirestoreLatestAnalysisDocument, FirestoreRawMarketDataDocument } from "@/lib/types/firestore";
+import { compareAnalysisResults, formatRelativeTime } from "@/lib/utils/format";
+
+export type ComputedDashboardState = {
+  snapshot: DashboardSnapshot;
+  rawMarketData: FirestoreRawMarketDataDocument[];
+};
+
+type ProviderBundle = {
+  instrument: Instrument;
+  price: PriceSnapshot;
+  cot: COTSnapshot;
+  sentiment: SentimentSnapshot;
+  volatility: VolatilitySnapshot;
+};
+
+function toTrendValues(trend: PriceSnapshot["weeklyTrend"]) {
+  return {
+    timeframe: trend.timeframe,
+    bias: trend.bias,
+    ema20: trend.ema20,
+    ema50: trend.ema50,
+    macdHistogram: trend.macdHistogram,
+  };
+}
+
+function toPriceHistoryValues(priceHistory: PriceSnapshot["priceHistory"]) {
+  return priceHistory.map((point) => ({
+    label: point.label,
+    value: point.value,
+  }));
+}
+
+function isFresh(isoDate: string) {
+  return Date.now() - new Date(isoDate).getTime() <= firestoreAnalysisConfig.staleAfterHours * 60 * 60 * 1000;
+}
+
+async function getStoredLatestAnalysisDocs() {
+  const db = adminDb;
+  if (!db) return null;
+
+  const snapshot = await db.collection(firestoreCollections.latestAnalysis).get();
+  if (snapshot.empty) return [];
+
+  return snapshot.docs.map((doc) => doc.data() as FirestoreLatestAnalysisDocument);
+}
+
+function isStoredSnapshotFresh(latestDocs: FirestoreLatestAnalysisDocument[]) {
+  const latestWrite = latestDocs.map((doc) => doc.writtenAt).sort().at(-1);
+  return Boolean(latestWrite && isFresh(latestWrite));
+}
+
+async function getProviderBundle(instrument: Instrument): Promise<ProviderBundle> {
+  const [price, cot, sentiment, volatility] = await Promise.all([
+    priceProvider.getSnapshot(instrument),
+    cotProvider.getSnapshot(instrument),
+    sentimentProvider.getSnapshot(instrument),
+    mockVolatilityProvider.getSnapshot(instrument),
+  ]);
+
+  return { instrument, price, cot, sentiment, volatility };
+}
+
+function buildStatusItems(bundles: ProviderBundle[], fallbackCount: number): SystemStatusItem[] {
+  const jobCompletedAt = new Date().toISOString();
+  const newestPriceUpdate = bundles.map((bundle) => bundle.price.updatedAt).sort().at(-1) ?? new Date().toISOString();
+  const newestCotUpdate = bundles.map((bundle) => bundle.cot.updatedAt).sort().at(-1) ?? new Date().toISOString();
+  const newestSentimentUpdate = bundles.map((bundle) => bundle.sentiment.updatedAt).sort().at(-1) ?? new Date().toISOString();
+  const priceFallbackCount = bundles.filter((bundle) => bundle.price.freshness.mode === "fallback").length;
+  const cotFallbackCount = bundles.filter((bundle) => bundle.cot.freshness.mode === "fallback").length;
+  const sentimentFallbackCount = bundles.filter((bundle) => bundle.sentiment.freshness.mode === "fallback").length;
+  const providerSources = [...new Set(bundles.flatMap((bundle) => [bundle.price.source, bundle.cot.source, bundle.sentiment.source]))];
+  const providerSummary = providerSources.join(", ");
+  const handledIssueCount = priceFallbackCount + cotFallbackCount + sentimentFallbackCount;
+
+  return [
+    {
+      id: "analysis-job",
+      label: "Latest analysis job",
+      value: formatRelativeTime(jobCompletedAt),
+      status: fallbackCount > 0 ? "warning" : "ok",
+      detail:
+        fallbackCount > 0
+          ? `${bundles.length} instruments processed by the provider-backed analysis engine with ${fallbackCount} fallback instrument snapshot${fallbackCount === 1 ? "" : "s"}`
+          : `${bundles.length} instruments processed by the provider-backed analysis engine using ${providerSummary}`,
+      category: "job",
+      source: "provider",
+      updatedAt: jobCompletedAt,
+    },
+    {
+      id: "price-update",
+      label: "Latest price update",
+      value: formatRelativeTime(newestPriceUpdate),
+      status: priceFallbackCount > 0 ? "warning" : "ok",
+      detail:
+        priceFallbackCount > 0
+          ? `${priceFallbackCount} instrument${priceFallbackCount === 1 ? " is" : "s are"} using Firestore or mock fallback after ${priceProviderConfig.provider} fetch issues`
+          : `${priceProviderConfig.provider} refreshed the current dashboard snapshot server-side`,
+      category: "feed",
+      source: "provider",
+      updatedAt: newestPriceUpdate,
+      freshnessMode: priceFallbackCount > 0 ? "fallback" : "live",
+    },
+    {
+      id: "cot-update",
+      label: "Latest COT update",
+      value: formatRelativeTime(newestCotUpdate),
+      status: cotFallbackCount > 0 ? "warning" : "ok",
+      detail:
+        cotFallbackCount > 0
+          ? `Weekly COT bias is using Firestore or mock fallback for ${cotFallbackCount} instrument${cotFallbackCount === 1 ? "" : "s"}`
+          : `${cotProviderConfig.provider} refreshed or served the current weekly COT layer`,
+      category: "feed",
+      source: "provider",
+      updatedAt: newestCotUpdate,
+      freshnessMode: cotFallbackCount > 0 ? "fallback" : "live",
+    },
+    {
+      id: "sentiment-update",
+      label: "Latest sentiment update",
+      value: formatRelativeTime(newestSentimentUpdate),
+      status: sentimentFallbackCount > 0 ? "warning" : "ok",
+      detail:
+        sentimentFallbackCount > 0
+          ? `Retail sentiment is using Firestore or mock fallback for ${sentimentFallbackCount} instrument${sentimentFallbackCount === 1 ? "" : "s"}`
+          : `${sentimentProviderConfig.provider} refreshed the contrarian retail sentiment layer`,
+      category: "feed",
+      source: "provider",
+      updatedAt: newestSentimentUpdate,
+      freshnessMode: sentimentFallbackCount > 0 ? "fallback" : "live",
+    },
+    {
+      id: "recent-errors",
+      label: "Recent errors",
+      value: handledIssueCount > 0 ? `${handledIssueCount} handled` : "None",
+      status: handledIssueCount > 0 ? "warning" : "ok",
+      detail:
+        handledIssueCount > 0
+          ? "Provider-side price, COT, or retail sentiment issues were handled through Firestore or mock fallback without blocking the dashboard"
+          : "No recent provider-side pipeline errors were encountered while building this snapshot",
+      category: "error",
+      source: "provider",
+    },
+    {
+      id: "data-mode",
+      label: "Data mode",
+      value: fallbackCount > 0 ? `${fallbackCount} fallback` : "Live",
+      status: fallbackCount > 0 ? "warning" : "ok",
+      detail:
+        fallbackCount > 0
+          ? "Some instruments are using last stored values for retail sentiment, weekly COT, or another provider input"
+          : "All instruments are using live provider-backed pricing with current supporting inputs",
+      category: "mode",
+      source: "provider",
+      freshnessMode: fallbackCount > 0 ? "fallback" : "live",
+    },
+  ];
+}
+
+function buildRawMarketDataEntries(bundles: ProviderBundle[]): FirestoreRawMarketDataDocument[] {
+  return bundles.flatMap(({ instrument, price, cot, sentiment, volatility }) => {
+    const entries: FirestoreRawMarketDataDocument[] = [
+      {
+        ticker: instrument.ticker,
+        category: "price",
+        source: price.source,
+        timeframe: "multi",
+        capturedAt: price.updatedAt,
+        freshnessMode: price.freshness.mode,
+        values: {
+          currentPrice: price.currentPrice,
+          atr14: price.atr14,
+          atrPercent: price.atrPercent,
+          weeklyBias: price.weeklyTrend.bias,
+          dailyBias: price.dailyTrend.bias,
+          fourHourBias: price.fourHourMomentum.bias,
+          weeklyTrend: toTrendValues(price.weeklyTrend),
+          dailyTrend: toTrendValues(price.dailyTrend),
+          fourHourMomentum: toTrendValues(price.fourHourMomentum),
+          priceHistory: toPriceHistoryValues(price.priceHistory),
+          freshnessNote: price.freshness.note,
+        },
+      },
+      {
+        ticker: instrument.ticker,
+        category: "cot",
+        source: cot.source,
+        capturedAt: cot.updatedAt,
+        freshnessMode: cot.freshness.mode,
+        values: {
+          bias: cot.bias,
+          netPosition: cot.netPosition,
+          history: cot.history.map((point) => ({
+            label: point.label,
+            value: point.value,
+          })),
+          marketStrategy: cot.market.strategy,
+          marketLabel: cot.market.label,
+          marketNote: cot.market.note ?? null,
+          marketComponents: cot.market.components.map((component) => ({
+            marketName: component.marketName,
+            marketCode: component.marketCode ?? null,
+            exchangeName: component.exchangeName ?? null,
+            weight: component.weight,
+            openInterest: component.openInterest,
+            updatedAt: component.updatedAt,
+            largeSpeculators: {
+              long: component.largeSpeculators.long,
+              short: component.largeSpeculators.short,
+              net: component.largeSpeculators.net,
+              netPercent: component.largeSpeculators.netPercent,
+            },
+            commercialHedgers: {
+              long: component.commercialHedgers.long,
+              short: component.commercialHedgers.short,
+              net: component.commercialHedgers.net,
+              netPercent: component.commercialHedgers.netPercent,
+            },
+          })),
+          freshnessNote: cot.freshness.note,
+        },
+      },
+      {
+        ticker: instrument.ticker,
+        category: "sentiment",
+        source: sentiment.source,
+        capturedAt: sentiment.updatedAt,
+        freshnessMode: sentiment.freshness.mode,
+        values: {
+          retailLong: sentiment.retailLong,
+          retailShort: sentiment.retailShort,
+          history: sentiment.history.map((point) => ({
+            label: point.label,
+            value: point.value,
+          })),
+          freshnessNote: sentiment.freshness.note,
+        },
+      },
+      {
+        ticker: instrument.ticker,
+        category: "volatility",
+        source: "mock-provider",
+        capturedAt: volatility.updatedAt,
+        freshnessMode: volatility.freshness.mode,
+        values: {
+          atrPercent: volatility.atrPercent,
+          realizedVolatility: volatility.realizedVolatility,
+          regimeHint: volatility.regimeHint,
+        },
+      },
+    ];
+
+    return entries;
+  });
+}
+
+export async function buildComputedDashboardState(): Promise<ComputedDashboardState> {
+  const bundles = await Promise.all(instruments.map(getProviderBundle));
+
+  const analyses = await Promise.all(
+    bundles.map(async ({ instrument, price, cot, sentiment, volatility }) => {
+      const computed = computeAnalysis(price, cot, sentiment, volatility);
+      const analysisBase: AnalysisResult = {
+        instrument,
+        ...computed,
+        aiSummary: "",
+        explanation: "",
+      };
+      const narrative = await aiSummaryService.summarize({
+        analysis: analysisBase,
+        factors: {
+          cotNetPosition: cot.netPosition,
+          weeklyTrendBias: price.weeklyTrend.bias,
+          dailyTrendBias: price.dailyTrend.bias,
+          momentumBias: price.fourHourMomentum.bias,
+          retailShort: sentiment.retailShort,
+        },
+      });
+
+      return {
+        ...analysisBase,
+        aiSummary: narrative.summary,
+        explanation: narrative.explanation,
+      };
+    }),
+  );
+
+  const sortedAnalyses = analyses.sort(compareAnalysisResults);
+  const fallbackCount = sortedAnalyses.filter((analysis) => analysis.freshness.mode === "fallback").length;
+
+  return {
+    snapshot: {
+      analyses: sortedAnalyses,
+      statusItems: buildStatusItems(bundles, fallbackCount),
+    },
+    rawMarketData: buildRawMarketDataEntries(bundles),
+  };
+}
+
+export async function getDashboardSnapshot(): Promise<DashboardSnapshot> {
+  if (!adminDb) {
+    return (await buildComputedDashboardState()).snapshot;
+  }
+
+  try {
+    const latestDocs = await getStoredLatestAnalysisDocs();
+    if (latestDocs?.length && isStoredSnapshotFresh(latestDocs)) {
+      const storedSnapshot = await getDashboardSnapshotFromFirestore();
+      if (storedSnapshot) return storedSnapshot;
+    }
+
+    const computedState = await buildComputedDashboardState();
+    await seedFirestoreAnalysisStore(computedState.snapshot, computedState.rawMarketData);
+
+    return (await getDashboardSnapshotFromFirestore()) ?? computedState.snapshot;
+  } catch (error) {
+    const computedState = await buildComputedDashboardState();
+
+    await writeSystemLog({
+      level: "warning",
+      scope: "dashboard-read",
+      message: "Firestore read failed, dashboard returned computed snapshot instead",
+      details: {
+        reason: error instanceof Error ? error.message : "unknown-error",
+      },
+    }).catch(() => undefined);
+
+    return computedState.snapshot;
+  }
+}
