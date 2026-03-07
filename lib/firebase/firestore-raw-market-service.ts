@@ -1,5 +1,7 @@
 import "server-only";
 
+import { FieldPath } from "firebase-admin/firestore";
+
 import { firestoreAnalysisConfig, firestoreCollections } from "@/lib/config/firestore";
 import { adminDb } from "@/lib/firebase/admin";
 import type { FirestoreRawMarketDataDocument, RawMarketDataCategory } from "@/lib/types/firestore";
@@ -7,6 +9,14 @@ import { writeSystemLog } from "@/lib/firebase/firestore-system-log-service";
 
 function toDocId(entry: FirestoreRawMarketDataDocument) {
   return `${entry.category}-${entry.capturedAt.replace(/[:.]/g, "-")}`;
+}
+
+function getCategoryDocIdBounds(category: RawMarketDataCategory) {
+  const prefix = `${category}-`;
+  return {
+    startAt: prefix,
+    endAt: `${prefix}\uf8ff`,
+  };
 }
 
 export async function storeRawMarketData(entries: FirestoreRawMarketDataDocument[]) {
@@ -59,6 +69,25 @@ export async function getLatestRawMarketDataForTickers(tickers: string[], limit:
 }
 
 export async function getLatestRawMarketEntry(ticker: string, category: RawMarketDataCategory) {
-  const entries = await getLatestRawMarketData(ticker, firestoreAnalysisConfig.historyLimit);
-  return entries.find((entry) => entry.category === category) ?? null;
+  const db = adminDb;
+  if (!db) return null;
+
+  const { startAt, endAt } = getCategoryDocIdBounds(category);
+  const snapshot = await db
+    .collection(firestoreCollections.rawMarketData)
+    .doc(ticker)
+    .collection("entries")
+    .where(FieldPath.documentId(), ">=", startAt)
+    .where(FieldPath.documentId(), "<=", endAt)
+    .orderBy(FieldPath.documentId(), "desc")
+    .limit(1)
+    .get();
+
+  const latestDoc = snapshot.docs[0];
+  return latestDoc ? (latestDoc.data() as FirestoreRawMarketDataDocument) : null;
+}
+
+export async function getLatestRawMarketEntriesForTickers(tickers: string[], categories: RawMarketDataCategory[]) {
+  const entries = await Promise.all(tickers.flatMap((ticker) => categories.map((category) => getLatestRawMarketEntry(ticker, category))));
+  return entries.filter((entry): entry is FirestoreRawMarketDataDocument => entry !== null);
 }

@@ -2,7 +2,7 @@ import "server-only";
 
 import { firestoreAnalysisConfig, firestoreCollections } from "@/lib/config/firestore";
 import { adminDb } from "@/lib/firebase/admin";
-import { getLatestRawMarketDataForTickers, storeRawMarketData } from "@/lib/firebase/firestore-raw-market-service";
+import { getLatestRawMarketEntriesForTickers, storeRawMarketData } from "@/lib/firebase/firestore-raw-market-service";
 import { getRecentSystemLogs, writeSystemLog } from "@/lib/firebase/firestore-system-log-service";
 import type { AnalysisResult, DashboardSnapshot, HistoryPoint, SignalHistoryPoint, SystemStatusItem } from "@/lib/types/analysis";
 import type {
@@ -15,6 +15,8 @@ import type {
   RawMarketDataCategory,
 } from "@/lib/types/firestore";
 import { compareAnalysisResults, formatRelativeTime } from "@/lib/utils/format";
+
+const statusFeedCategories: RawMarketDataCategory[] = ["price", "cot", "sentiment"];
 
 function isStale(updatedAt: string) {
   return Date.now() - new Date(updatedAt).getTime() > firestoreAnalysisConfig.staleAfterHours * 60 * 60 * 1000;
@@ -350,7 +352,7 @@ export async function getDashboardSnapshotFromFirestore(): Promise<DashboardSnap
   const tickers = latestDocs.map((doc) => doc.ticker);
   const [historySeries, rawEntries, logs] = await Promise.all([
     Promise.all(latestDocs.map((doc) => getHistorySeriesForTicker(doc.ticker, doc))),
-    getLatestRawMarketDataForTickers(tickers),
+    getLatestRawMarketEntriesForTickers(tickers, statusFeedCategories),
     getRecentSystemLogs(),
   ]);
 
