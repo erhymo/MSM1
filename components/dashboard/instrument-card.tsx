@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import type { AnalysisResult } from "@/lib/types/analysis";
 import { cn } from "@/lib/utils/cn";
-import { formatPercent, formatPrice, formatRelativeTime, SIGNAL_LABELS } from "@/lib/utils/format";
+import { formatApproxNokPrice, formatPercent, formatPrice, formatRelativeTime, SIGNAL_LABELS } from "@/lib/utils/format";
 
 const signalTone: Record<
   AnalysisResult["signal"],
@@ -71,6 +71,9 @@ export function InstrumentCard({ analysis, onSelect }: InstrumentCardProps) {
           : "bg-slate-400";
   const tone = signalTone[analysis.signal];
   const isNoTrade = analysis.signal === "NO_TRADE";
+  const entryNok = formatApproxNokPrice(analysis.entry, analysis);
+  const stopNok = isNoTrade ? null : formatApproxNokPrice(analysis.stopLoss, analysis);
+  const targetNok = isNoTrade ? null : formatApproxNokPrice(analysis.target, analysis);
 
   return (
     <button type="button" onClick={() => onSelect(analysis)} className="h-full w-full text-left">
@@ -127,9 +130,9 @@ export function InstrumentCard({ analysis, onSelect }: InstrumentCardProps) {
               <p className="text-xs text-slate-400">{isNoTrade ? "Observation only" : `R/R ${analysis.riskReward.toFixed(1)}`}</p>
             </div>
             <div className="grid grid-cols-2 gap-2.5">
-              <TradeMetric label="Entry" value={formatPrice(analysis.entry)} />
-              <TradeMetric label="Stop" value={isNoTrade ? "—" : formatPrice(analysis.stopLoss)} muted={isNoTrade} />
-              <TradeMetric label="Target" value={isNoTrade ? "—" : formatPrice(analysis.target)} muted={isNoTrade} />
+              <TradeMetric label="Entry" value={formatPrice(analysis.entry)} secondaryValue={entryNok} />
+              <TradeMetric label="Stop" value={isNoTrade ? "—" : formatPrice(analysis.stopLoss)} secondaryValue={stopNok} muted={isNoTrade} />
+              <TradeMetric label="Target" value={isNoTrade ? "—" : formatPrice(analysis.target)} secondaryValue={targetNok} muted={isNoTrade} />
               <TradeMetric label="Risk / reward" value={isNoTrade ? "Flat" : analysis.riskReward.toFixed(1)} muted={isNoTrade} />
             </div>
           </div>
@@ -174,11 +177,22 @@ function Metric({ label, value, icon: Icon }: { label: string; value: string; ic
   );
 }
 
-function TradeMetric({ label, value, muted = false }: { label: string; value: string; muted?: boolean }) {
+function TradeMetric({
+  label,
+  value,
+  secondaryValue,
+  muted = false,
+}: {
+  label: string;
+  value: string;
+  secondaryValue?: string | null;
+  muted?: boolean;
+}) {
   return (
     <div className="rounded-2xl border border-white/10 bg-black/10 p-3">
       <p className="text-[11px] uppercase tracking-[0.16em] text-slate-400">{label}</p>
       <p className={cn("mt-2 text-sm font-semibold text-white", muted && "text-slate-400")}>{value}</p>
+      {secondaryValue ? <p className="mt-1 text-xs text-slate-400">{secondaryValue}</p> : null}
     </div>
   );
 }

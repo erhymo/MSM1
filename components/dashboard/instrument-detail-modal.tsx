@@ -18,7 +18,7 @@ import { Card } from "@/components/ui/card";
 import { Modal } from "@/components/ui/modal";
 import type { AnalysisResult } from "@/lib/types/analysis";
 import { cn } from "@/lib/utils/cn";
-import { formatPercent, formatPrice, formatRelativeTime, SIGNAL_LABELS } from "@/lib/utils/format";
+import { formatApproxNokPrice, formatPercent, formatPrice, formatRelativeTime, SIGNAL_LABELS } from "@/lib/utils/format";
 
 type InstrumentDetailModalProps = {
   analysis: AnalysisResult | null;
@@ -51,6 +51,9 @@ export function InstrumentDetailModal({ analysis, open, onClose }: InstrumentDet
   const hasCotHistory = Boolean(analysis.cotHistory?.length);
   const freshnessLabel = analysis.freshness.mode === "fallback" ? "Fallback active" : "Live provider data";
   const isNoTrade = analysis.signal === "NO_TRADE";
+  const entryNok = formatApproxNokPrice(analysis.entry, analysis);
+  const stopNok = isNoTrade ? null : formatApproxNokPrice(analysis.stopLoss, analysis);
+  const targetNok = isNoTrade ? null : formatApproxNokPrice(analysis.target, analysis);
   const confidenceTone =
     analysis.confidence >= 75
       ? "bg-emerald-400"
@@ -109,9 +112,9 @@ export function InstrumentDetailModal({ analysis, open, onClose }: InstrumentDet
             ) : null}
 
             <div className="grid gap-3 sm:grid-cols-2">
-              <Stat label="Entry" value={formatPrice(analysis.entry)} />
-              <Stat label="Stop loss" value={isNoTrade ? "—" : formatPrice(analysis.stopLoss)} muted={isNoTrade} />
-              <Stat label="Target" value={isNoTrade ? "—" : formatPrice(analysis.target)} muted={isNoTrade} />
+              <Stat label="Entry" value={formatPrice(analysis.entry)} secondaryValue={entryNok} />
+              <Stat label="Stop loss" value={isNoTrade ? "—" : formatPrice(analysis.stopLoss)} secondaryValue={stopNok} muted={isNoTrade} />
+              <Stat label="Target" value={isNoTrade ? "—" : formatPrice(analysis.target)} secondaryValue={targetNok} muted={isNoTrade} />
               <Stat label="Risk / reward" value={isNoTrade ? "Flat" : analysis.riskReward.toFixed(1)} muted={isNoTrade} />
             </div>
 
@@ -257,11 +260,22 @@ function ChartCard({ title, children }: { title: string; children: React.ReactNo
   );
 }
 
-function Stat({ label, value, muted = false }: { label: string; value: string; muted?: boolean }) {
+function Stat({
+  label,
+  value,
+  secondaryValue,
+  muted = false,
+}: {
+  label: string;
+  value: string;
+  secondaryValue?: string | null;
+  muted?: boolean;
+}) {
   return (
     <div className="rounded-[24px] border border-white/10 bg-white/[0.03] p-4">
       <p className="text-xs uppercase tracking-[0.16em] text-slate-400">{label}</p>
       <p className={cn("mt-2 text-lg font-semibold text-white", muted && "text-slate-400")}>{value}</p>
+      {secondaryValue ? <p className="mt-1 text-xs text-slate-400">{secondaryValue}</p> : null}
     </div>
   );
 }

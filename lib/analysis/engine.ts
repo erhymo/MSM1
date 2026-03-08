@@ -1,6 +1,7 @@
 import "server-only";
 
 import { aiSummaryService } from "@/lib/ai/summary";
+import { enrichAnalysesWithNokDisplay } from "@/lib/analysis/nok-display";
 import { computeAnalysis } from "@/lib/analysis/scoring";
 import { firestoreAnalysisConfig, firestoreCollections } from "@/lib/config/firestore";
 import { instruments } from "@/lib/config/instruments";
@@ -111,7 +112,7 @@ function buildStatusItems(bundles: ProviderBundle[], fallbackCount: number): Sys
       status: priceFallbackCount > 0 ? "warning" : "ok",
       detail:
         priceFallbackCount > 0
-          ? `${priceFallbackCount} instrument${priceFallbackCount === 1 ? " is" : "s are"} using Firestore or mock fallback after ${priceProviderConfig.provider} fetch issues`
+          ? `${priceFallbackCount} instrument${priceFallbackCount === 1 ? " is" : "s are"} using ExchangeRate, Firestore, or mock fallback after ${priceProviderConfig.provider} fetch issues`
           : `${priceProviderConfig.provider} refreshed the current dashboard snapshot server-side`,
       category: "feed",
       source: "provider",
@@ -302,7 +303,8 @@ export async function buildComputedDashboardState(): Promise<ComputedDashboardSt
     }),
   );
 
-  const sortedAnalyses = analyses.sort(compareAnalysisResults);
+  const analysesWithNokDisplay = await enrichAnalysesWithNokDisplay(analyses);
+  const sortedAnalyses = analysesWithNokDisplay.sort(compareAnalysisResults);
   const fallbackCount = sortedAnalyses.filter((analysis) => analysis.freshness.mode === "fallback").length;
 
   return {

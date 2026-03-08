@@ -4,6 +4,7 @@ import { firestoreAnalysisConfig, firestoreCollections } from "@/lib/config/fire
 import { adminDb } from "@/lib/firebase/admin";
 import { getLatestRawMarketEntriesForTickers, storeRawMarketData } from "@/lib/firebase/firestore-raw-market-service";
 import { getRecentSystemLogs, writeSystemLog } from "@/lib/firebase/firestore-system-log-service";
+import { enrichAnalysesWithNokDisplay } from "@/lib/analysis/nok-display";
 import type { AnalysisResult, DashboardSnapshot, HistoryPoint, SignalHistoryPoint, SystemStatusItem } from "@/lib/types/analysis";
 import type {
   AnalysisHistorySeries,
@@ -69,6 +70,7 @@ function toLatestAnalysisDocument(analysis: AnalysisResult): FirestoreLatestAnal
     aiSummary: analysis.aiSummary,
     explanation: analysis.explanation,
     factorContributions: analysis.factorContributions,
+    nokDisplay: analysis.nokDisplay,
     source: firestoreAnalysisConfig.sourceLabel,
     writtenAt: new Date().toISOString(),
   };
@@ -168,6 +170,7 @@ function toAnalysisResult(doc: FirestoreLatestAnalysisDocument, history: Analysi
     aiSummary: doc.aiSummary,
     explanation: doc.explanation,
     factorContributions: doc.factorContributions,
+    nokDisplay: doc.nokDisplay,
     priceHistory: history.priceHistory,
     confidenceHistory: history.confidenceHistory,
     cotHistory: history.cotHistory,
@@ -356,9 +359,11 @@ export async function getDashboardSnapshotFromFirestore(): Promise<DashboardSnap
     getRecentSystemLogs(),
   ]);
 
-  const analyses = latestDocs
+  const analyses = await enrichAnalysesWithNokDisplay(
+    latestDocs
     .map((doc, index) => toAnalysisResult(doc, historySeries[index]))
-    .sort(compareAnalysisResults);
+    .sort(compareAnalysisResults),
+  );
 
   const averageHistoryPoints = analyses.length
     ? Math.round(analyses.reduce((sum, analysis) => sum + analysis.priceHistory.length, 0) / analyses.length)

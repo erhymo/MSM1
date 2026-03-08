@@ -4,8 +4,10 @@ import type { PriceDataProvider } from "@/lib/providers/types";
 import type { Instrument } from "@/lib/types/analysis";
 
 import { priceProviderConfig } from "@/lib/providers/price/config";
+import { getExchangeRateFallbackPriceSnapshot } from "@/lib/providers/price/exchange-rate-provider";
 import { getFirestoreFallbackPriceSnapshot } from "@/lib/providers/price/firestore-fallback";
 import { yahooChartPriceProvider } from "@/lib/providers/price/yahoo-chart-provider";
+import { isFxInstrument } from "@/lib/utils/instrument-currency";
 
 const remoteProviders: Record<typeof priceProviderConfig.provider, PriceDataProvider> = {
   "yahoo-chart": yahooChartPriceProvider,
@@ -20,6 +22,29 @@ export const priceProvider: PriceDataProvider = {
     } catch (error) {
       const reason = error instanceof Error ? error.message : "unknown-error";
       const firestoreFallback = await getFirestoreFallbackPriceSnapshot(instrument);
+      let exchangeRateReason: string | null = null;
+
+      if (isFxInstrument(instrument) && priceProviderConfig.exchangeRateApiKey) {
+        try {
+          const exchangeRateFallback = await getExchangeRateFallbackPriceSnapshot(instrument, firestoreFallback);
+
+          await writeSystemLog({
+            level: "warning",
+            scope: "price-provider",
+            message: "Primary price provider failed, using ExchangeRate-API FX fallback",
+            details: {
+              ticker: instrument.ticker,
+              provider: priceProviderConfig.provider,
+              reason,
+              referenceSource: firestoreFallback?.source ?? null,
+            },
+          }).catch(() => undefined);
+
+          return exchangeRateFallback;
+        } catch (exchangeError) {
+          exchangeRateReason = exchangeError instanceof Error ? exchangeError.message : "unknown-exchange-rate-error";
+        }
+      }
 
       if (firestoreFallback) {
         await writeSystemLog({
@@ -30,6 +55,7 @@ export const priceProvider: PriceDataProvider = {
             ticker: instrument.ticker,
             provider: priceProviderConfig.provider,
             reason,
+            exchangeRateReason,
           },
         }).catch(() => undefined);
 
@@ -46,6 +72,7 @@ export const priceProvider: PriceDataProvider = {
           ticker: instrument.ticker,
           provider: priceProviderConfig.provider,
           reason,
+          exchangeRateReason,
         },
       }).catch(() => undefined);
 

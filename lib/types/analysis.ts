@@ -102,6 +102,13 @@ export interface DataFreshness {
   note: string;
 }
 
+export interface NokDisplayContext {
+  quoteCurrency: string;
+  nokPerQuote: number;
+  source: string;
+  updatedAt: string;
+}
+
 export interface TimeframeIndicatorSnapshot {
   timeframe: Timeframe;
   bias: number;
@@ -174,6 +181,7 @@ export interface AnalysisResult {
   aiSummary: string;
   explanation: string;
   factorContributions: FactorContribution[];
+  nokDisplay?: NokDisplayContext;
   priceHistory: HistoryPoint[];
   confidenceHistory: HistoryPoint[];
   cotHistory?: HistoryPoint[];

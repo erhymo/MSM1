@@ -1,5 +1,12 @@
 import type { AnalysisResult, SignalType } from "@/lib/types/analysis";
 
+const nokCurrencyFormatter = new Intl.NumberFormat("nb-NO", {
+  style: "currency",
+  currency: "NOK",
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
 export const SIGNAL_LABELS: Record<SignalType, string> = {
   STRONG_BUY: "Strong Buy",
   BUY: "Buy",
@@ -28,6 +35,20 @@ export function formatPrice(value: number) {
   if (value >= 100) return value.toFixed(2);
   if (value >= 10) return value.toFixed(3);
   return value.toFixed(4);
+}
+
+export function formatNok(value: number) {
+  return nokCurrencyFormatter.format(value);
+}
+
+export function formatApproxNokPrice(value: number, analysis: AnalysisResult) {
+  const nokPerQuote = analysis.nokDisplay?.nokPerQuote;
+
+  if (!Number.isFinite(value) || !Number.isFinite(nokPerQuote) || !nokPerQuote || nokPerQuote <= 0) {
+    return null;
+  }
+
+  return `≈ ${formatNok(value * nokPerQuote)}`;
 }
 
 export function formatRelativeTime(isoDate: string) {

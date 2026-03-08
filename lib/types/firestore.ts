@@ -28,6 +28,7 @@ export interface FirestoreLatestAnalysisDocument {
   aiSummary: string;
   explanation: string;
   factorContributions: FactorContribution[];
+  nokDisplay?: AnalysisResult["nokDisplay"];
   source: string;
   writtenAt: string;
 }
