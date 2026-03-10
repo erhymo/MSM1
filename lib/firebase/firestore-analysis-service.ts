@@ -332,16 +332,23 @@ async function getHistorySeriesForTicker(ticker: string, latest: FirestoreLatest
   const db = adminDb;
   if (!db) return defaultHistoryFromLatest(latest);
 
-  const historySnapshot = await db
-    .collection(firestoreCollections.analysisHistory)
-    .doc(ticker)
-    .collection("entries")
-    .orderBy("recordedAt", "desc")
-    .limit(firestoreAnalysisConfig.historyLimit)
-    .get();
+  try {
+    const historySnapshot = await db
+      .collection(firestoreCollections.analysisHistory)
+      .doc(ticker)
+      .collection("entries")
+      .orderBy("recordedAt", "desc")
+      .limit(firestoreAnalysisConfig.historyLimit)
+      .get();
 
-  const entries = historySnapshot.docs.map((doc) => doc.data() as FirestoreAnalysisHistoryDocument).reverse();
-  return toHistorySeries(entries, latest);
+    const entries = historySnapshot.docs.map((doc) => doc.data() as FirestoreAnalysisHistoryDocument).reverse();
+    return toHistorySeries(entries, latest);
+  } catch {
+    // History is additive metadata for the stored dashboard snapshot. If it is
+    // unavailable, return a minimal series derived from the latest document so
+    // the rest of the snapshot can still render.
+    return defaultHistoryFromLatest(latest);
+  }
 }
 
 export async function getDashboardSnapshotFromFirestore(): Promise<DashboardSnapshot | null> {
