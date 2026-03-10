@@ -47,15 +47,22 @@ export async function getLatestRawMarketData(ticker: string, limit: number = fir
   const db = adminDb;
   if (!db) return [];
 
-  const snapshot = await db
-    .collection(firestoreCollections.rawMarketData)
-    .doc(ticker)
-    .collection("entries")
-    .orderBy("capturedAt", "desc")
-    .limit(limit)
-    .get();
+  try {
+    const snapshot = await db
+      .collection(firestoreCollections.rawMarketData)
+      .doc(ticker)
+      .collection("entries")
+      .orderBy("capturedAt", "desc")
+      .limit(limit)
+      .get();
 
-  return snapshot.docs.map((doc) => doc.data() as FirestoreRawMarketDataDocument);
+    return snapshot.docs.map((doc) => doc.data() as FirestoreRawMarketDataDocument);
+  } catch {
+    // Raw market reads are optional cache/fallback lookups. If Firestore is
+    // temporarily unavailable or quota-limited, return an empty result so the
+    // dashboard can continue with remote or mock provider fallbacks.
+    return [];
+  }
 }
 
 export async function getLatestRawMarketDataForTickers(tickers: string[], limit: number = 4) {
