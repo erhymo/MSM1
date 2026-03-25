@@ -50,11 +50,29 @@ function getTrendLabel(price: PriceSnapshot, regime: MarketRegime) {
 }
 
 function getRetailScore(retailLong: number) {
-  return round(clamp((50 - retailLong) * 3.2, -100, 100));
+  const deviation = 50 - retailLong;
+  const absDeviation = Math.abs(deviation);
+  const normalizedDeviation = absDeviation / 50;
+  const amplified = Math.pow(normalizedDeviation, 1.4) * 50;
+  return round(clamp(Math.sign(deviation) * amplified * 2.8, -100, 100));
 }
 
 function getTrendScore(price: PriceSnapshot) {
   return round(clamp(price.weeklyTrend.bias * 0.3 + price.dailyTrend.bias * 0.45 + price.fourHourMomentum.bias * 0.25, -100, 100));
+}
+
+function getCotMomentumScore(cot: COTSnapshot) {
+  const history = cot.history;
+  if (history.length < 3) return 0;
+
+  const recent = history.slice(-3);
+  const oldest = recent[0]!.value;
+  const latest = recent[recent.length - 1]!.value;
+  const rateOfChange = latest - oldest;
+
+  const accelerating = history.length >= 4 && Math.abs(latest - recent[1]!.value) > Math.abs(recent[1]!.value - oldest);
+
+  return round(clamp(rateOfChange * 2.2 + (accelerating ? Math.sign(rateOfChange) * 12 : 0), -100, 100));
 }
 
 function getMomentumScore(price: PriceSnapshot) {
@@ -139,14 +157,17 @@ function buildConfidenceHistory(confidence: number, momentumScore: number) {
 export function computeAnalysis(price: PriceSnapshot, cot: COTSnapshot, sentiment: SentimentSnapshot, volatility: VolatilitySnapshot): CoreAnalysis {
   const marketRegime = getMarketRegime(price, volatility);
   const cotScore = round(clamp(cot.netPosition, -100, 100));
+  const cotMomentumScore = getCotMomentumScore(cot);
   const trendScore = getTrendScore(price);
   const momentumScore = getMomentumScore(price);
   const retailScore = getRetailScore(sentiment.retailLong);
-  const directionalBias = Math.sign(cotScore + trendScore + momentumScore + retailScore) || Math.sign(price.dailyTrend.bias);
+  const directionalBias = Math.sign(cotScore + cotMomentumScore + trendScore + momentumScore + retailScore) || Math.sign(price.dailyTrend.bias);
   const volatilityScore = getVolatilityScore(volatility, marketRegime, directionalBias);
 
+  const cotMomentumDirection = cotMomentumScore > 0 ? "accelerating" : cotMomentumScore < 0 ? "decelerating" : "flat";
   const factorContributions = [
     toContribution("COT", factorWeights.cot, cotScore, `${cot.bias} large speculator bias`),
+    toContribution("COT momentum", factorWeights.cotMomentum, cotMomentumScore, `Positioning ${cotMomentumDirection} over last 3 weeks`),
     toContribution("Trend", factorWeights.trend, trendScore, `${getTrendLabel(price, marketRegime)} across weekly/daily/4H`),
     toContribution("Retail sentiment", factorWeights.retailSentiment, retailScore, `Retail long at ${sentiment.retailLong.toFixed(0)}% used contrarian`),
     toContribution("Momentum", factorWeights.momentum, momentumScore, `4H timing aligned at ${price.fourHourMomentum.bias}`),
@@ -159,7 +180,7 @@ export function computeAnalysis(price: PriceSnapshot, cot: COTSnapshot, sentimen
   ];
 
   const score = clamp(factorContributions.reduce((sum, item) => sum + item.contribution, 0), -100, 100);
-  const relevantScores = [cotScore, trendScore, retailScore, momentumScore, volatilityScore].filter((value) => Math.abs(value) >= 15);
+  const relevantScores = [cotScore, cotMomentumScore, trendScore, retailScore, momentumScore, volatilityScore].filter((value) => Math.abs(value) >= 15);
   const alignedCount = relevantScores.filter((value) => Math.sign(value) === Math.sign(score)).length;
   const alignment = relevantScores.length ? alignedCount / relevantScores.length : 0.35;
   const fallbackCount = [price.freshness, cot.freshness, sentiment.freshness, volatility.freshness].filter(

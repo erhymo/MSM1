@@ -1,5 +1,6 @@
 export const factorWeights = {
-  cot: 35,
+  cot: 28,
+  cotMomentum: 7,
   trend: 25,
   retailSentiment: 20,
   momentum: 10,
