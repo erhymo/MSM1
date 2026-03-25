@@ -64,7 +64,7 @@ export async function enrichAnalysesWithNokDisplay(analyses: AnalysisResult[]): 
     await writeSystemLog({
       level: "warning",
       scope: "price-provider",
-      message: `ExchangeRate API failed for ${failedCurrencies.length} of ${pendingQuoteCurrencies.length} currencies`,
+      message: `ExchangeRate API failed for ${failedCurrencies.length}/${pendingQuoteCurrencies.length} currencies · ${failedCurrencies[0]}`,
       details: {
         failed: failedCurrencies.join(" | "),
         succeeded: nokDisplayByQuoteCurrency.size,
