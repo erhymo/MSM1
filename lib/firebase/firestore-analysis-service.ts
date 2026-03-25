@@ -70,7 +70,7 @@ function toLatestAnalysisDocument(analysis: AnalysisResult): FirestoreLatestAnal
     aiSummary: analysis.aiSummary,
     explanation: analysis.explanation,
     factorContributions: analysis.factorContributions,
-    nokDisplay: analysis.nokDisplay,
+    ...(analysis.nokDisplay ? { nokDisplay: analysis.nokDisplay } : {}),
     source: firestoreAnalysisConfig.sourceLabel,
     writtenAt: new Date().toISOString(),
   };
