@@ -3,7 +3,7 @@ import "server-only";
 import { aiSummaryService } from "@/lib/ai/summary";
 import { enrichAnalysesWithNokDisplay } from "@/lib/analysis/nok-display";
 import { computeAnalysis } from "@/lib/analysis/scoring";
-import { firestoreAnalysisConfig, firestoreCollections } from "@/lib/config/firestore";
+import { firestoreCollections } from "@/lib/config/firestore";
 import { instruments } from "@/lib/config/instruments";
 import { adminDb } from "@/lib/firebase/admin";
 import { getDashboardSnapshotFromFirestore, seedFirestoreAnalysisStore } from "@/lib/firebase/firestore-analysis-service";
@@ -49,10 +49,6 @@ function toPriceHistoryValues(priceHistory: PriceSnapshot["priceHistory"]) {
   }));
 }
 
-function isFresh(isoDate: string) {
-  return Date.now() - new Date(isoDate).getTime() <= firestoreAnalysisConfig.staleAfterHours * 60 * 60 * 1000;
-}
-
 async function getStoredLatestAnalysisDocs() {
   const db = adminDb;
   if (!db) return null;
@@ -61,11 +57,6 @@ async function getStoredLatestAnalysisDocs() {
   if (snapshot.empty) return [];
 
   return snapshot.docs.map((doc) => doc.data() as FirestoreLatestAnalysisDocument);
-}
-
-function isStoredSnapshotFresh(latestDocs: FirestoreLatestAnalysisDocument[]) {
-  const latestWrite = latestDocs.map((doc) => doc.writtenAt).sort().at(-1);
-  return Boolean(latestWrite && isFresh(latestWrite));
 }
 
 async function getProviderBundle(instrument: Instrument): Promise<ProviderBundle> {
@@ -323,7 +314,7 @@ export async function getDashboardSnapshot(): Promise<DashboardSnapshot> {
 
   try {
     const latestDocs = await getStoredLatestAnalysisDocs();
-    if (latestDocs?.length && isStoredSnapshotFresh(latestDocs)) {
+    if (latestDocs?.length) {
       const storedSnapshot = await getDashboardSnapshotFromFirestore();
       if (storedSnapshot) return storedSnapshot;
     }

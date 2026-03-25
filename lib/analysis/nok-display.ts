@@ -2,6 +2,7 @@ import "server-only";
 
 import { getExchangeRatePairQuote } from "@/lib/providers/price/exchange-rate-provider";
 import { priceProviderConfig } from "@/lib/providers/price/config";
+import { writeSystemLog } from "@/lib/firebase/firestore-system-log-service";
 import type { AnalysisResult } from "@/lib/types/analysis";
 import { getInstrumentCurrencyPair, supportsNokDisplay } from "@/lib/utils/instrument-currency";
 
@@ -49,12 +50,27 @@ export async function enrichAnalysesWithNokDisplay(analyses: AnalysisResult[]): 
   );
 
   const nokDisplayByQuoteCurrency = new Map<string, NonNullable<AnalysisResult["nokDisplay"]>>();
+  const failedCurrencies: string[] = [];
 
-  rateEntries.forEach((entry) => {
+  rateEntries.forEach((entry, index) => {
     if (entry.status === "fulfilled") {
       nokDisplayByQuoteCurrency.set(entry.value[0], entry.value[1]);
+    } else {
+      failedCurrencies.push(`${pendingQuoteCurrencies[index]}: ${entry.reason instanceof Error ? entry.reason.message : String(entry.reason)}`);
     }
   });
+
+  if (failedCurrencies.length > 0) {
+    await writeSystemLog({
+      level: "warning",
+      scope: "price-provider",
+      message: `ExchangeRate API failed for ${failedCurrencies.length} of ${pendingQuoteCurrencies.length} currencies`,
+      details: {
+        failed: failedCurrencies.join(" | "),
+        succeeded: nokDisplayByQuoteCurrency.size,
+      },
+    }).catch(() => undefined);
+  }
 
   return analyses.map((analysis) => {
     if (!supportsNokDisplay(analysis.instrument) || hasValidNokDisplay(analysis)) {
