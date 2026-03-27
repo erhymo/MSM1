@@ -263,8 +263,20 @@ function buildRawMarketDataEntries(bundles: ProviderBundle[]): FirestoreRawMarke
   });
 }
 
+async function fetchBundlesInBatches(batchSize = 10): Promise<ProviderBundle[]> {
+  const results: ProviderBundle[] = [];
+
+  for (let i = 0; i < instruments.length; i += batchSize) {
+    const batch = instruments.slice(i, i + batchSize);
+    const batchResults = await Promise.all(batch.map(getProviderBundle));
+    results.push(...batchResults);
+  }
+
+  return results;
+}
+
 export async function buildComputedDashboardState(): Promise<ComputedDashboardState> {
-  const bundles = await Promise.all(instruments.map(getProviderBundle));
+  const bundles = await fetchBundlesInBatches(10);
 
   const analyses = await Promise.all(
     bundles.map(async ({ instrument, price, cot, sentiment, volatility }) => {
