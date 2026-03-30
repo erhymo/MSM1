@@ -319,33 +319,23 @@ export async function buildComputedDashboardState(): Promise<ComputedDashboardSt
   };
 }
 
-const emptyDashboard: DashboardSnapshot = {
-  analyses: [],
-  statusItems: [
-    {
-      id: "awaiting-data",
-      label: "Waiting for first analysis run",
-      value: "Pending",
-      status: "warning",
-      detail:
-        "No analysis data is available yet. The scheduled cron job will populate the dashboard automatically within the next analysis cycle.",
-      category: "job",
-      source: "system",
-      updatedAt: new Date().toISOString(),
-    },
-  ],
-};
-
-/** Maximum time (ms) to wait for a Firestore read before returning an empty dashboard. */
+/** Maximum time (ms) to wait for a Firestore read before falling back. */
 const dashboardReadTimeoutMs = 8_000;
+
+/**
+ * Number of instruments to compute on-demand when Firestore is empty.
+ * 7 majors can be fetched + scored well within the Vercel 10 s limit.
+ */
+const onDemandInstrumentLimit = 7;
 
 export async function getDashboardSnapshot(): Promise<DashboardSnapshot> {
   if (!adminDb) {
-    // No Firestore configured – fall back to full compute (dev/local only).
+    // No Firestore configured – full compute (dev / local only).
     return (await buildComputedDashboardState()).snapshot;
   }
 
   try {
+    // 1. Try Firestore (fast path) with a timeout safety net.
     const snapshot = await Promise.race([
       getDashboardSnapshotFromFirestoreIfReady(),
       new Promise<null>((resolve) => setTimeout(() => resolve(null), dashboardReadTimeoutMs)),
@@ -353,30 +343,99 @@ export async function getDashboardSnapshot(): Promise<DashboardSnapshot> {
 
     if (snapshot) return snapshot;
 
-    // Firestore is empty or timed out – return an empty dashboard.  The cron
-    // job (/api/cron/analysis) is responsible for populating Firestore; we
-    // never trigger the heavy compute path during an SSR page request because
-    // it exceeds Vercel's serverless function timeout for 49 instruments.
-    await writeSystemLog({
-      level: "warning",
-      scope: "dashboard-read",
-      message: "Dashboard served empty: Firestore snapshot unavailable or read timed out",
-      details: { timeoutMs: dashboardReadTimeoutMs },
-    }).catch(() => undefined);
+    // 2. Firestore is empty or timed out – compute a small batch on-demand so
+    //    the user always sees *something*.  We limit to the first N instruments
+    //    (majors) to stay within Vercel's serverless timeout.
+    const quickSnapshot = await buildQuickSnapshot();
 
-    return emptyDashboard;
-  } catch (error) {
     await writeSystemLog({
       level: "warning",
       scope: "dashboard-read",
-      message: "Firestore read failed, returning empty dashboard",
+      message: "Firestore empty or timed out – served on-demand quick snapshot",
       details: {
-        reason: error instanceof Error ? error.message : "unknown-error",
+        instruments: quickSnapshot.analyses.length,
+        timeoutMs: dashboardReadTimeoutMs,
       },
     }).catch(() => undefined);
 
-    return emptyDashboard;
+    return quickSnapshot;
+  } catch {
+    // 3. Unexpected error – still try a quick compute so the page is never empty.
+    try {
+      return await buildQuickSnapshot();
+    } catch {
+      // Nothing works – return a minimal status dashboard as absolute last resort.
+      return {
+        analyses: [],
+        statusItems: [
+          {
+            id: "system-error",
+            label: "Temporary data issue",
+            value: "Retrying",
+            status: "warning",
+            detail: "Could not load analysis data. The dashboard will refresh automatically when the next scheduled run completes.",
+            category: "job",
+            source: "system",
+            updatedAt: new Date().toISOString(),
+          },
+        ],
+      };
+    }
   }
+}
+
+/**
+ * Compute a small snapshot (majors only) that fits within Vercel's timeout.
+ * This ensures the dashboard is never blank, even on a cold Firestore.
+ */
+async function buildQuickSnapshot(): Promise<DashboardSnapshot> {
+  const subset = instruments.slice(0, onDemandInstrumentLimit);
+  const bundles = await Promise.all(subset.map(getProviderBundle));
+
+  const analyses = await Promise.all(
+    bundles.map(async ({ instrument, price, cot, sentiment, volatility }) => {
+      const computed = computeAnalysis(price, cot, sentiment, volatility);
+      const analysisBase: AnalysisResult = {
+        instrument,
+        ...computed,
+        aiSummary: "",
+        explanation: "",
+      };
+      const narrative = await aiSummaryService.summarize({
+        analysis: analysisBase,
+        factors: {
+          cotNetPosition: cot.netPosition,
+          weeklyTrendBias: price.weeklyTrend.bias,
+          dailyTrendBias: price.dailyTrend.bias,
+          momentumBias: price.fourHourMomentum.bias,
+          retailShort: sentiment.retailShort,
+        },
+      });
+
+      return { ...analysisBase, aiSummary: narrative.summary, explanation: narrative.explanation };
+    }),
+  );
+
+  const analysesWithNokDisplay = await enrichAnalysesWithNokDisplay(analyses);
+  const sortedAnalyses = analysesWithNokDisplay.sort(compareAnalysisResults);
+  const fallbackCount = sortedAnalyses.filter((a) => a.freshness.mode === "fallback").length;
+
+  return {
+    analyses: sortedAnalyses,
+    statusItems: [
+      ...buildStatusItems(bundles, fallbackCount),
+      {
+        id: "partial-load",
+        label: "Partial coverage",
+        value: `${subset.length} of ${instruments.length}`,
+        status: "warning",
+        detail: `Showing ${subset.length} major instruments while the full set is computed in the background. All ${instruments.length} instruments will appear after the next scheduled analysis run.`,
+        category: "job",
+        source: "system",
+        updatedAt: new Date().toISOString(),
+      },
+    ],
+  };
 }
 
 /**
