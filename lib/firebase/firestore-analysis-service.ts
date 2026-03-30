@@ -302,7 +302,8 @@ export async function seedFirestoreAnalysisStore(snapshot: DashboardSnapshot, ra
   const db = adminDb;
   if (!db) return;
 
-  let batch = db.batch();
+  const firestore = db;
+  let batch = firestore.batch();
   let writeCount = 0;
   let committedBatchCount = 0;
 
@@ -310,7 +311,7 @@ export async function seedFirestoreAnalysisStore(snapshot: DashboardSnapshot, ra
     if (!writeCount) return;
 
     await batch.commit();
-    batch = db.batch();
+    batch = firestore.batch();
     writeCount = 0;
     committedBatchCount += 1;
   }
@@ -325,14 +326,14 @@ export async function seedFirestoreAnalysisStore(snapshot: DashboardSnapshot, ra
   }
 
   for (const analysis of snapshot.analyses) {
-    const instrumentRef = db.collection(firestoreCollections.instruments).doc(analysis.instrument.ticker);
-    const latestRef = db.collection(firestoreCollections.latestAnalysis).doc(analysis.instrument.ticker);
+    const instrumentRef = firestore.collection(firestoreCollections.instruments).doc(analysis.instrument.ticker);
+    const latestRef = firestore.collection(firestoreCollections.latestAnalysis).doc(analysis.instrument.ticker);
 
     await queueSet(instrumentRef, toInstrumentDocument(analysis));
     await queueSet(latestRef, toLatestAnalysisDocument(analysis));
 
     for (const entry of toHistoryDocuments(analysis)) {
-      const historyRef = db
+      const historyRef = firestore
         .collection(firestoreCollections.analysisHistory)
         .doc(analysis.instrument.ticker)
         .collection("entries")

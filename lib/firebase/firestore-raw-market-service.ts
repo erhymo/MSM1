@@ -19,7 +19,8 @@ export async function storeRawMarketData(entries: FirestoreRawMarketDataDocument
   const db = adminDb;
   if (!db || !entries.length) return;
 
-  let batch = db.batch();
+  const firestore = db;
+  let batch = firestore.batch();
   let writeCount = 0;
   let committedBatchCount = 0;
 
@@ -27,13 +28,13 @@ export async function storeRawMarketData(entries: FirestoreRawMarketDataDocument
     if (!writeCount) return;
 
     await batch.commit();
-    batch = db.batch();
+    batch = firestore.batch();
     writeCount = 0;
     committedBatchCount += 1;
   }
 
   for (const entry of entries) {
-    const ref = db
+    const ref = firestore
       .collection(firestoreCollections.rawMarketData)
       .doc(entry.ticker)
       .collection("entries")

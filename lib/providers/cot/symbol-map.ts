@@ -42,10 +42,8 @@ function gbpProxy(note: string): CotSymbolMapping {
 
 /* Shorthand refs for the 8 CFTC currency futures */
 const EUR = { name: "EURO FX", w: 1 };
-const EUR_INV = { name: "EURO FX", w: -1 };
 const GBP = { name: "BRITISH POUND", w: 1 };
 const GBP_INV = { name: "BRITISH POUND", w: -1 };
-const JPY = { name: "JAPANESE YEN", w: 1 };
 const JPY_INV = { name: "JAPANESE YEN", w: -1 };
 const AUD = { name: "AUSTRALIAN DOLLAR", w: 1 };
 const AUD_INV = { name: "AUSTRALIAN DOLLAR", w: -1 };
