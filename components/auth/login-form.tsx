@@ -72,12 +72,14 @@ export function LoginForm() {
 
       <button
         type="submit"
-        disabled={loading || initializing || !isFirebaseConfigured}
+        disabled={loading || !isFirebaseConfigured}
         className="flex w-full items-center justify-center gap-2 rounded-2xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-slate-700"
       >
         {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-        {initializing ? "Checking session..." : loading ? "Signing in..." : "Sign in"}
+        {loading ? "Signing in..." : "Sign in"}
       </button>
+
+      {initializing ? <p className="text-center text-xs text-muted">Checking existing session in the background…</p> : null}
     </form>
   );
 }

@@ -59,13 +59,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     if (user && pathname.startsWith("/login")) {
       router.replace("/dashboard");
-      router.refresh();
       return;
     }
 
     if (!user && pathname.startsWith("/dashboard")) {
       router.replace("/login");
-      router.refresh();
     }
   }, [initializing, pathname, router, user]);
 
@@ -81,7 +79,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       await signInWithEmailAndPassword(auth, email, password);
       await setSessionCookie();
       router.replace("/dashboard");
-      router.refresh();
     } catch (error) {
       throw new Error(getFirebaseAuthErrorMessage(error));
     } finally {
@@ -100,7 +97,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(null);
       await clearSessionCookie();
       router.replace("/login");
-      router.refresh();
     } finally {
       setLoading(false);
     }
