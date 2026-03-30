@@ -4,7 +4,6 @@ import { firestoreAnalysisConfig, firestoreCollections } from "@/lib/config/fire
 import { adminDb } from "@/lib/firebase/admin";
 import { storeRawMarketData } from "@/lib/firebase/firestore-raw-market-service";
 import { writeSystemLog } from "@/lib/firebase/firestore-system-log-service";
-import { enrichAnalysesWithNokDisplay } from "@/lib/analysis/nok-display";
 import type { AnalysisResult, DashboardSnapshot, HistoryPoint, SignalHistoryPoint } from "@/lib/types/analysis";
 import type {
   AnalysisHistorySeries,
@@ -244,12 +243,12 @@ export async function getDashboardSnapshotFromFirestore(): Promise<DashboardSnap
 
   const latestDocs = latestSnapshot.docs.map((doc) => doc.data() as FirestoreLatestAnalysisDocument);
 
-  // Derive history from the latest document itself (no subcollection reads).
-  const analyses = await enrichAnalysesWithNokDisplay(
-    latestDocs
-      .map((doc) => toAnalysisResult(doc, defaultHistoryFromLatest(doc)))
-      .sort(compareAnalysisResults),
-  );
+  // Serve the stored snapshot as-is. Dashboard reads must not trigger extra
+  // network enrichment, otherwise a "fast" Firestore read can regress into a
+  // slow request that falls back to partial on-demand coverage.
+  const analyses = latestDocs
+    .map((doc) => toAnalysisResult(doc, defaultHistoryFromLatest(doc)))
+    .sort(compareAnalysisResults);
 
   const fallbackCount = analyses.filter((a) => a.freshness.mode === "fallback").length;
   const latestAnalysisWrite = latestDocs.map((d) => d.writtenAt).sort().at(-1) ?? new Date().toISOString();

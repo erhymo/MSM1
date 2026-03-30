@@ -1,9 +1,9 @@
 import "server-only";
 
 import { aiSummaryService } from "@/lib/ai/summary";
+import { templateSummaryProvider } from "@/lib/ai/template-summary-provider";
 import { enrichAnalysesWithNokDisplay } from "@/lib/analysis/nok-display";
 import { computeAnalysis } from "@/lib/analysis/scoring";
-import { firestoreCollections } from "@/lib/config/firestore";
 import { instruments } from "@/lib/config/instruments";
 import { adminDb } from "@/lib/firebase/admin";
 import { getDashboardSnapshotFromFirestore } from "@/lib/firebase/firestore-analysis-service";
@@ -16,7 +16,7 @@ import { priceProvider } from "@/lib/providers/price/provider";
 import { sentimentProviderConfig } from "@/lib/providers/sentiment/config";
 import { sentimentProvider } from "@/lib/providers/sentiment/provider";
 import type { AnalysisResult, COTSnapshot, DashboardSnapshot, Instrument, PriceSnapshot, SentimentSnapshot, SystemStatusItem, VolatilitySnapshot } from "@/lib/types/analysis";
-import type { FirestoreLatestAnalysisDocument, FirestoreRawMarketDataDocument } from "@/lib/types/firestore";
+import type { FirestoreRawMarketDataDocument } from "@/lib/types/firestore";
 import { compareAnalysisResults, formatRelativeTime } from "@/lib/utils/format";
 
 export type ComputedDashboardState = {
@@ -47,16 +47,6 @@ function toPriceHistoryValues(priceHistory: PriceSnapshot["priceHistory"]) {
     label: point.label,
     value: point.value,
   }));
-}
-
-async function getStoredLatestAnalysisDocs() {
-  const db = adminDb;
-  if (!db) return null;
-
-  const snapshot = await db.collection(firestoreCollections.latestAnalysis).get();
-  if (snapshot.empty) return [];
-
-  return snapshot.docs.map((doc) => doc.data() as FirestoreLatestAnalysisDocument);
 }
 
 async function getProviderBundle(instrument: Instrument): Promise<ProviderBundle> {
@@ -321,6 +311,7 @@ export async function buildComputedDashboardState(): Promise<ComputedDashboardSt
 
 /** Maximum time (ms) to wait for a Firestore read before falling back. */
 const dashboardReadTimeoutMs = 8_000;
+const dashboardReadTimedOut = Symbol("dashboard-read-timeout");
 
 /**
  * Number of instruments to compute on-demand when Firestore is empty.
@@ -335,58 +326,81 @@ export async function getDashboardSnapshot(): Promise<DashboardSnapshot> {
   }
 
   try {
-    // 1. Try Firestore (fast path) with a timeout safety net.
+    // 1. Try Firestore (fast path) with a timeout safety net. The Firestore
+    //    snapshot is the source of truth on dashboard reads, even when stale.
     const snapshot = await Promise.race([
-      getDashboardSnapshotFromFirestoreIfReady(),
-      new Promise<null>((resolve) => setTimeout(() => resolve(null), dashboardReadTimeoutMs)),
+      getDashboardSnapshotFromFirestore(),
+      new Promise<typeof dashboardReadTimedOut>((resolve) => setTimeout(() => resolve(dashboardReadTimedOut), dashboardReadTimeoutMs)),
     ]);
 
-    if (snapshot) return snapshot;
+    if (snapshot && snapshot !== dashboardReadTimedOut) return snapshot;
 
-    // 2. Firestore is empty or timed out – compute a small batch on-demand so
-    //    the user always sees *something*.  We limit to the first N instruments
-    //    (majors) to stay within Vercel's serverless timeout.
-    const quickSnapshot = await buildQuickSnapshot();
+    if (snapshot === null) {
+      // 2. Firestore is truly empty – compute a small first-load snapshot so the
+      //    dashboard still shows something before the initial runner finishes.
+      const quickSnapshot = await buildQuickSnapshot();
+
+      await writeSystemLog({
+        level: "warning",
+        scope: "dashboard-read",
+        message: "Firestore empty – served on-demand bootstrap snapshot",
+        details: {
+          instruments: quickSnapshot.analyses.length,
+          timeoutMs: dashboardReadTimeoutMs,
+        },
+      }).catch(() => undefined);
+
+      return quickSnapshot;
+    }
 
     await writeSystemLog({
       level: "warning",
       scope: "dashboard-read",
-      message: "Firestore empty or timed out – served on-demand quick snapshot",
+      message: "Firestore read timed out before stored snapshot could be served",
       details: {
-        instruments: quickSnapshot.analyses.length,
         timeoutMs: dashboardReadTimeoutMs,
       },
     }).catch(() => undefined);
 
-    return quickSnapshot;
+    return {
+      analyses: [],
+      statusItems: [
+        {
+          id: "dashboard-read-timeout",
+          label: "Stored snapshot delayed",
+          value: "Retrying",
+          status: "warning",
+          detail: "The latest stored dashboard snapshot took too long to load. Refresh in a moment to retry the Firestore-backed view.",
+          category: "job",
+          source: "system",
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+    };
   } catch {
-    // 3. Unexpected error – still try a quick compute so the page is never empty.
-    try {
-      return await buildQuickSnapshot();
-    } catch {
-      // Nothing works – return a minimal status dashboard as absolute last resort.
-      return {
-        analyses: [],
-        statusItems: [
-          {
-            id: "system-error",
-            label: "Temporary data issue",
-            value: "Retrying",
-            status: "warning",
-            detail: "Could not load analysis data. The dashboard will refresh automatically when the next scheduled run completes.",
-            category: "job",
-            source: "system",
-            updatedAt: new Date().toISOString(),
-          },
-        ],
-      };
-    }
+    // 3. Unexpected error – avoid switching to a partial on-demand snapshot
+    //    when stored data should have been available.
+    return {
+      analyses: [],
+      statusItems: [
+        {
+          id: "system-error",
+          label: "Temporary data issue",
+          value: "Retrying",
+          status: "warning",
+          detail: "Could not load the stored dashboard snapshot. Refresh shortly to retry the Firestore-backed view.",
+          category: "job",
+          source: "system",
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+    };
   }
 }
 
 /**
- * Compute a small snapshot (majors only) that fits within Vercel's timeout.
- * This ensures the dashboard is never blank, even on a cold Firestore.
+ * Compute a small snapshot (majors only) for the first-load case where
+ * Firestore has not been populated yet.
  */
 async function buildQuickSnapshot(): Promise<DashboardSnapshot> {
   const subset = instruments.slice(0, onDemandInstrumentLimit);
@@ -401,7 +415,7 @@ async function buildQuickSnapshot(): Promise<DashboardSnapshot> {
         aiSummary: "",
         explanation: "",
       };
-      const narrative = await aiSummaryService.summarize({
+      const narrative = await templateSummaryProvider.summarize({
         analysis: analysisBase,
         factors: {
           cotNetPosition: cot.netPosition,
@@ -416,8 +430,7 @@ async function buildQuickSnapshot(): Promise<DashboardSnapshot> {
     }),
   );
 
-  const analysesWithNokDisplay = await enrichAnalysesWithNokDisplay(analyses);
-  const sortedAnalyses = analysesWithNokDisplay.sort(compareAnalysisResults);
+  const sortedAnalyses = analyses.sort(compareAnalysisResults);
   const fallbackCount = sortedAnalyses.filter((a) => a.freshness.mode === "fallback").length;
 
   return {
@@ -429,22 +442,11 @@ async function buildQuickSnapshot(): Promise<DashboardSnapshot> {
         label: "Partial coverage",
         value: `${subset.length} of ${instruments.length}`,
         status: "warning",
-        detail: `Showing ${subset.length} major instruments while the full set is computed in the background. All ${instruments.length} instruments will appear after the next scheduled analysis run.`,
+        detail: `Showing ${subset.length} major instruments until the first stored Firestore snapshot is written. All ${instruments.length} instruments will appear after the analysis runner completes.`,
         category: "job",
         source: "system",
         updatedAt: new Date().toISOString(),
       },
     ],
   };
-}
-
-/**
- * Attempt to read a stored dashboard snapshot from Firestore.  Returns `null`
- * when the latestAnalysis collection is empty (i.e. cron has not run yet).
- */
-async function getDashboardSnapshotFromFirestoreIfReady(): Promise<DashboardSnapshot | null> {
-  const latestDocs = await getStoredLatestAnalysisDocs();
-  if (!latestDocs?.length) return null;
-
-  return getDashboardSnapshotFromFirestore();
 }
