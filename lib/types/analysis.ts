@@ -196,7 +196,7 @@ export interface SystemStatusItem {
   status: "ok" | "warning" | "error";
   detail: string;
   category: "job" | "feed" | "mode" | "error";
-  source: "mock" | "firestore" | "provider";
+  source: "mock" | "firestore" | "provider" | "system";
   updatedAt?: string;
   freshnessMode?: DataFreshness["mode"];
 }

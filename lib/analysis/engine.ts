@@ -6,7 +6,7 @@ import { computeAnalysis } from "@/lib/analysis/scoring";
 import { firestoreCollections } from "@/lib/config/firestore";
 import { instruments } from "@/lib/config/instruments";
 import { adminDb } from "@/lib/firebase/admin";
-import { getDashboardSnapshotFromFirestore, seedFirestoreAnalysisStore } from "@/lib/firebase/firestore-analysis-service";
+import { getDashboardSnapshotFromFirestore } from "@/lib/firebase/firestore-analysis-service";
 import { writeSystemLog } from "@/lib/firebase/firestore-system-log-service";
 import { cotProviderConfig } from "@/lib/providers/cot/config";
 import { cotProvider } from "@/lib/providers/cot/provider";
@@ -319,34 +319,73 @@ export async function buildComputedDashboardState(): Promise<ComputedDashboardSt
   };
 }
 
+const emptyDashboard: DashboardSnapshot = {
+  analyses: [],
+  statusItems: [
+    {
+      id: "awaiting-data",
+      label: "Waiting for first analysis run",
+      value: "Pending",
+      status: "warning",
+      detail:
+        "No analysis data is available yet. The scheduled cron job will populate the dashboard automatically within the next analysis cycle.",
+      category: "job",
+      source: "system",
+      updatedAt: new Date().toISOString(),
+    },
+  ],
+};
+
+/** Maximum time (ms) to wait for a Firestore read before returning an empty dashboard. */
+const dashboardReadTimeoutMs = 8_000;
+
 export async function getDashboardSnapshot(): Promise<DashboardSnapshot> {
   if (!adminDb) {
+    // No Firestore configured – fall back to full compute (dev/local only).
     return (await buildComputedDashboardState()).snapshot;
   }
 
   try {
-    const latestDocs = await getStoredLatestAnalysisDocs();
-    if (latestDocs?.length) {
-      const storedSnapshot = await getDashboardSnapshotFromFirestore();
-      if (storedSnapshot) return storedSnapshot;
-    }
+    const snapshot = await Promise.race([
+      getDashboardSnapshotFromFirestoreIfReady(),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), dashboardReadTimeoutMs)),
+    ]);
 
-    const computedState = await buildComputedDashboardState();
-    await seedFirestoreAnalysisStore(computedState.snapshot, computedState.rawMarketData);
+    if (snapshot) return snapshot;
 
-    return (await getDashboardSnapshotFromFirestore()) ?? computedState.snapshot;
-  } catch (error) {
-    const computedState = await buildComputedDashboardState();
-
+    // Firestore is empty or timed out – return an empty dashboard.  The cron
+    // job (/api/cron/analysis) is responsible for populating Firestore; we
+    // never trigger the heavy compute path during an SSR page request because
+    // it exceeds Vercel's serverless function timeout for 49 instruments.
     await writeSystemLog({
       level: "warning",
       scope: "dashboard-read",
-      message: "Firestore read failed, dashboard returned computed snapshot instead",
+      message: "Dashboard served empty: Firestore snapshot unavailable or read timed out",
+      details: { timeoutMs: dashboardReadTimeoutMs },
+    }).catch(() => undefined);
+
+    return emptyDashboard;
+  } catch (error) {
+    await writeSystemLog({
+      level: "warning",
+      scope: "dashboard-read",
+      message: "Firestore read failed, returning empty dashboard",
       details: {
         reason: error instanceof Error ? error.message : "unknown-error",
       },
     }).catch(() => undefined);
 
-    return computedState.snapshot;
+    return emptyDashboard;
   }
+}
+
+/**
+ * Attempt to read a stored dashboard snapshot from Firestore.  Returns `null`
+ * when the latestAnalysis collection is empty (i.e. cron has not run yet).
+ */
+async function getDashboardSnapshotFromFirestoreIfReady(): Promise<DashboardSnapshot | null> {
+  const latestDocs = await getStoredLatestAnalysisDocs();
+  if (!latestDocs?.length) return null;
+
+  return getDashboardSnapshotFromFirestore();
 }
