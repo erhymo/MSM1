@@ -18,6 +18,16 @@ import { compareAnalysisResults, formatRelativeTime } from "@/lib/utils/format";
 const maxFirestoreBatchWrites = 450;
 const dashboardSnapshotDocumentId = "latest";
 
+type DashboardSnapshotReadSource = "dashboardSnapshots" | "latestAnalysis";
+
+type DashboardSnapshotReadAttempt = {
+  source: DashboardSnapshotReadSource;
+  snapshot: DashboardSnapshot | null;
+  durationMs: number;
+  outcome: "success" | "empty" | "error";
+  error: string | null;
+};
+
 function isStale(updatedAt: string) {
   return Date.now() - new Date(updatedAt).getTime() > firestoreAnalysisConfig.staleAfterHours * 60 * 60 * 1000;
 }
@@ -211,6 +221,33 @@ async function getDashboardSnapshotDocumentFromFirestore(): Promise<DashboardSna
   return toDashboardSnapshot(data.analyses, refreshStatusItems(data.statusItems ?? []));
 }
 
+async function readDashboardSnapshotCandidate(
+  source: DashboardSnapshotReadSource,
+  loader: () => Promise<DashboardSnapshot | null>,
+): Promise<DashboardSnapshotReadAttempt> {
+  const startedAt = Date.now();
+
+  try {
+    const snapshot = await loader();
+
+    return {
+      source,
+      snapshot,
+      durationMs: Date.now() - startedAt,
+      outcome: snapshot ? "success" : "empty",
+      error: null,
+    };
+  } catch (error) {
+    return {
+      source,
+      snapshot: null,
+      durationMs: Date.now() - startedAt,
+      outcome: "error",
+      error: error instanceof Error ? error.message : "Unknown Firestore dashboard read error",
+    };
+  }
+}
+
 async function getDashboardSnapshotFromLatestAnalysisCollection(): Promise<DashboardSnapshot | null> {
   const db = adminDb;
   if (!db) return null;
@@ -318,13 +355,52 @@ export async function seedFirestoreAnalysisStore(snapshot: DashboardSnapshot, ra
 }
 
 /**
- * Dashboard read path: prefer the single aggregated snapshot document, then
- * fall back to the legacy `latestAnalysis` collection until the next runner
- * has populated the new document.
+ * Dashboard read path: start the aggregated snapshot read and the legacy
+ * `latestAnalysis` fallback in parallel, then return the first successful
+ * snapshot. This keeps one slow Firestore path from blocking the other.
  */
 export async function getDashboardSnapshotFromFirestore(): Promise<DashboardSnapshot | null> {
-  const storedSnapshot = await getDashboardSnapshotDocumentFromFirestore();
-  if (storedSnapshot) return storedSnapshot;
+  const pendingReads = new Map<DashboardSnapshotReadSource, Promise<DashboardSnapshotReadAttempt>>([
+    ["dashboardSnapshots", readDashboardSnapshotCandidate("dashboardSnapshots", getDashboardSnapshotDocumentFromFirestore)],
+    ["latestAnalysis", readDashboardSnapshotCandidate("latestAnalysis", getDashboardSnapshotFromLatestAnalysisCollection)],
+  ]);
+  const attempts: DashboardSnapshotReadAttempt[] = [];
 
-  return getDashboardSnapshotFromLatestAnalysisCollection();
+  while (pendingReads.size) {
+    const attempt = await Promise.race(pendingReads.values());
+    pendingReads.delete(attempt.source);
+    attempts.push(attempt);
+
+    if (attempt.snapshot) {
+      if (attempt.source === "latestAnalysis") {
+        const storedSnapshotAttempt = attempts.find((entry) => entry.source === "dashboardSnapshots");
+
+        void writeSystemLog({
+          level: "warning",
+          scope: "dashboard-read",
+          message: "Dashboard served from legacy Firestore fallback",
+          details: {
+            winner: attempt.source,
+            winnerMs: attempt.durationMs,
+            storedSnapshotOutcome: storedSnapshotAttempt?.outcome ?? (pendingReads.has("dashboardSnapshots") ? "pending" : "unknown"),
+            storedSnapshotMs: storedSnapshotAttempt?.durationMs ?? null,
+            storedSnapshotPending: pendingReads.has("dashboardSnapshots"),
+          },
+        }).catch(() => undefined);
+      }
+
+      return attempt.snapshot;
+    }
+  }
+
+  const failedAttempts = attempts.filter((attempt) => attempt.outcome === "error");
+  if (failedAttempts.length) {
+    throw new Error(
+      failedAttempts
+        .map((attempt) => `${attempt.source}: ${attempt.error ?? "Unknown Firestore dashboard read error"}`)
+        .join("; "),
+    );
+  }
+
+  return null;
 }

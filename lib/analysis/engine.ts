@@ -377,7 +377,17 @@ export async function getDashboardSnapshot(): Promise<DashboardSnapshot> {
         },
       ],
     };
-  } catch {
+  } catch (error) {
+    await writeSystemLog({
+      level: "error",
+      scope: "dashboard-read",
+      message: "Stored dashboard snapshot read failed",
+      details: {
+        timeoutMs: dashboardReadTimeoutMs,
+        error: error instanceof Error ? error.message : "Unknown dashboard read error",
+      },
+    }).catch(() => undefined);
+
     // 3. Unexpected error – avoid switching to a partial on-demand snapshot
     //    when stored data should have been available.
     return {
