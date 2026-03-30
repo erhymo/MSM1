@@ -2,22 +2,19 @@ import "server-only";
 
 import { firestoreAnalysisConfig, firestoreCollections } from "@/lib/config/firestore";
 import { adminDb } from "@/lib/firebase/admin";
-import { getLatestRawMarketEntriesForTickers, storeRawMarketData } from "@/lib/firebase/firestore-raw-market-service";
-import { getRecentSystemLogs, writeSystemLog } from "@/lib/firebase/firestore-system-log-service";
+import { storeRawMarketData } from "@/lib/firebase/firestore-raw-market-service";
+import { writeSystemLog } from "@/lib/firebase/firestore-system-log-service";
 import { enrichAnalysesWithNokDisplay } from "@/lib/analysis/nok-display";
-import type { AnalysisResult, DashboardSnapshot, HistoryPoint, SignalHistoryPoint, SystemStatusItem } from "@/lib/types/analysis";
+import type { AnalysisResult, DashboardSnapshot, HistoryPoint, SignalHistoryPoint } from "@/lib/types/analysis";
 import type {
   AnalysisHistorySeries,
   FirestoreAnalysisHistoryDocument,
   FirestoreInstrumentDocument,
   FirestoreLatestAnalysisDocument,
   FirestoreRawMarketDataDocument,
-  FirestoreSystemLogDocument,
-  RawMarketDataCategory,
 } from "@/lib/types/firestore";
 import { compareAnalysisResults, formatRelativeTime } from "@/lib/utils/format";
 
-const statusFeedCategories: RawMarketDataCategory[] = ["price", "cot", "sentiment"];
 const maxFirestoreBatchWrites = 450;
 
 function isStale(updatedAt: string) {
@@ -143,20 +140,6 @@ function defaultHistoryFromLatest(doc: FirestoreLatestAnalysisDocument): Analysi
   };
 }
 
-function toHistorySeries(entries: FirestoreAnalysisHistoryDocument[], latest: FirestoreLatestAnalysisDocument): AnalysisHistorySeries {
-  if (!entries.length) return defaultHistoryFromLatest(latest);
-
-  return {
-    priceHistory: entries.filter((entry) => typeof entry.price === "number").map((entry) => toPoint(entry.label, entry.price!)),
-    confidenceHistory: entries.filter((entry) => typeof entry.confidence === "number").map((entry) => toPoint(entry.label, entry.confidence!)),
-    cotHistory: entries.filter((entry) => typeof entry.cotValue === "number").map((entry) => toPoint(entry.label, entry.cotValue!)),
-    sentimentHistory: entries.filter((entry) => typeof entry.retailLong === "number").map((entry) => toPoint(entry.label, entry.retailLong!)),
-    signalHistory: entries
-      .filter((entry) => typeof entry.score === "number" && entry.signal)
-      .map((entry) => toSignalPoint(entry.label, entry.score!, entry.signal!)),
-  };
-}
-
 function toAnalysisResult(doc: FirestoreLatestAnalysisDocument, history: AnalysisHistorySeries): AnalysisResult {
   return {
     instrument: doc.instrument,
@@ -184,118 +167,6 @@ function toAnalysisResult(doc: FirestoreLatestAnalysisDocument, history: Analysi
     sentimentHistory: history.sentimentHistory,
     signalHistory: history.signalHistory,
   };
-}
-
-function getLatestCategoryEntry(entries: FirestoreRawMarketDataDocument[], category: RawMarketDataCategory) {
-  return entries.filter((entry) => entry.category === category).sort((left, right) => left.capturedAt.localeCompare(right.capturedAt)).at(-1);
-}
-
-function getFeedStatusItem(
-  id: string,
-  label: string,
-  categoryKey: RawMarketDataCategory,
-  entries: FirestoreRawMarketDataDocument[],
-): SystemStatusItem {
-  const latestEntry = getLatestCategoryEntry(entries, categoryKey);
-
-  if (!latestEntry) {
-    return {
-      id,
-      label,
-      value: "Missing",
-      status: "warning",
-      detail: `No ${categoryKey.toUpperCase()} snapshot was found in rawMarketData`,
-      category: "feed",
-      source: "firestore",
-    };
-  }
-
-  return {
-    id,
-    label,
-    value: formatRelativeTime(latestEntry.capturedAt),
-    status: latestEntry.freshnessMode === "fallback" ? "warning" : "ok",
-    detail:
-      latestEntry.freshnessMode === "fallback"
-        ? `${latestEntry.ticker} is serving a fallback ${categoryKey} snapshot from ${latestEntry.source}`
-        : `${latestEntry.ticker} is the newest ${latestEntry.source} ${categoryKey} snapshot in Firestore`,
-    category: "feed",
-    source: "firestore",
-    updatedAt: latestEntry.capturedAt,
-    freshnessMode: latestEntry.freshnessMode,
-  };
-}
-
-function getErrorStatusItem(logs: FirestoreSystemLogDocument[]): SystemStatusItem {
-  const recentIssues = logs.filter((entry) => entry.level !== "info");
-  const latestIssue = recentIssues[0];
-
-  if (!latestIssue) {
-    return {
-      id: "recent-errors",
-      label: "Recent errors",
-      value: "None",
-      status: "ok",
-      detail: "No recent warning or error logs were found in systemLogs",
-      category: "error",
-      source: "firestore",
-    };
-  }
-
-  return {
-    id: "recent-errors",
-    label: "Recent errors",
-    value: `${recentIssues.length} recent issue${recentIssues.length === 1 ? "" : "s"}`,
-    status: latestIssue.level === "error" ? "error" : "warning",
-    detail: `${latestIssue.scope}: ${latestIssue.message}`,
-    category: "error",
-    source: "firestore",
-    updatedAt: latestIssue.createdAt,
-  };
-}
-
-function buildStatusItems(
-  analyses: AnalysisResult[],
-  latestDocs: FirestoreLatestAnalysisDocument[],
-  averageHistoryPoints: number,
-  rawEntries: FirestoreRawMarketDataDocument[],
-  logs: FirestoreSystemLogDocument[],
-): SystemStatusItem[] {
-  const latestAnalysisWrite = latestDocs.map((doc) => doc.writtenAt).sort().at(-1) ?? new Date().toISOString();
-  const fallbackCount = analyses.filter((analysis) => analysis.freshness.mode === "fallback").length;
-
-  return [
-    {
-      id: "analysis-job",
-      label: "Latest analysis job",
-      value: formatRelativeTime(latestAnalysisWrite),
-      status: fallbackCount > 0 ? "warning" : "ok",
-      detail:
-        fallbackCount > 0
-          ? `${latestDocs.length} latestAnalysis documents are available, but some are currently serving fallback values`
-          : `${latestDocs.length} latestAnalysis documents are available and within the freshness window`,
-      category: "job",
-      source: "firestore",
-      updatedAt: latestAnalysisWrite,
-    },
-    getFeedStatusItem("price-update", "Latest price update", "price", rawEntries),
-    getFeedStatusItem("cot-update", "Latest COT update", "cot", rawEntries),
-    getFeedStatusItem("sentiment-update", "Latest sentiment update", "sentiment", rawEntries),
-    getErrorStatusItem(logs),
-    {
-      id: "data-mode",
-      label: "Data mode",
-      value: fallbackCount > 0 ? `${fallbackCount} fallback` : "Live",
-      status: fallbackCount > 0 ? "warning" : "ok",
-      detail:
-        fallbackCount > 0
-          ? `The UI is using last known Firestore values where fresh data is missing · avg history ${averageHistoryPoints} pts`
-          : `Dashboard is serving live Firestore-backed data with analysisHistory coverage averaging ${averageHistoryPoints} points`,
-      category: "mode",
-      source: "firestore",
-      freshnessMode: fallbackCount > 0 ? "fallback" : "live",
-    },
-  ];
 }
 
 export async function seedFirestoreAnalysisStore(snapshot: DashboardSnapshot, rawMarketData: FirestoreRawMarketDataDocument[]) {
@@ -358,29 +229,12 @@ export async function seedFirestoreAnalysisStore(snapshot: DashboardSnapshot, ra
   });
 }
 
-async function getHistorySeriesForTicker(ticker: string, latest: FirestoreLatestAnalysisDocument) {
-  const db = adminDb;
-  if (!db) return defaultHistoryFromLatest(latest);
-
-  try {
-    const historySnapshot = await db
-      .collection(firestoreCollections.analysisHistory)
-      .doc(ticker)
-      .collection("entries")
-      .orderBy("recordedAt", "desc")
-      .limit(firestoreAnalysisConfig.historyLimit)
-      .get();
-
-    const entries = historySnapshot.docs.map((doc) => doc.data() as FirestoreAnalysisHistoryDocument).reverse();
-    return toHistorySeries(entries, latest);
-  } catch {
-    // History is additive metadata for the stored dashboard snapshot. If it is
-    // unavailable, return a minimal series derived from the latest document so
-    // the rest of the snapshot can still render.
-    return defaultHistoryFromLatest(latest);
-  }
-}
-
+/**
+ * Light dashboard read: fetches only the `latestAnalysis` collection (single
+ * query) and derives minimal history from each document.  This avoids the N+1
+ * subcollection reads (history + rawMarketData) that previously caused Vercel
+ * serverless timeouts for 50+ instruments.
+ */
 export async function getDashboardSnapshotFromFirestore(): Promise<DashboardSnapshot | null> {
   const db = adminDb;
   if (!db) return null;
@@ -389,25 +243,46 @@ export async function getDashboardSnapshotFromFirestore(): Promise<DashboardSnap
   if (latestSnapshot.empty) return null;
 
   const latestDocs = latestSnapshot.docs.map((doc) => doc.data() as FirestoreLatestAnalysisDocument);
-  const tickers = latestDocs.map((doc) => doc.ticker);
-  const [historySeries, rawEntries, logs] = await Promise.all([
-    Promise.all(latestDocs.map((doc) => getHistorySeriesForTicker(doc.ticker, doc))),
-    getLatestRawMarketEntriesForTickers(tickers, statusFeedCategories),
-    getRecentSystemLogs(),
-  ]);
 
+  // Derive history from the latest document itself (no subcollection reads).
   const analyses = await enrichAnalysesWithNokDisplay(
     latestDocs
-    .map((doc, index) => toAnalysisResult(doc, historySeries[index]))
-    .sort(compareAnalysisResults),
+      .map((doc) => toAnalysisResult(doc, defaultHistoryFromLatest(doc)))
+      .sort(compareAnalysisResults),
   );
 
-  const averageHistoryPoints = analyses.length
-    ? Math.round(analyses.reduce((sum, analysis) => sum + analysis.priceHistory.length, 0) / analyses.length)
-    : 0;
+  const fallbackCount = analyses.filter((a) => a.freshness.mode === "fallback").length;
+  const latestAnalysisWrite = latestDocs.map((d) => d.writtenAt).sort().at(-1) ?? new Date().toISOString();
 
   return {
     analyses,
-    statusItems: buildStatusItems(analyses, latestDocs, averageHistoryPoints, rawEntries, logs),
+    statusItems: [
+      {
+        id: "analysis-job",
+        label: "Latest analysis job",
+        value: formatRelativeTime(latestAnalysisWrite),
+        status: fallbackCount > 0 ? "warning" : "ok",
+        detail:
+          fallbackCount > 0
+            ? `${latestDocs.length} instruments available, some serving fallback values`
+            : `${latestDocs.length} instruments available and within the freshness window`,
+        category: "job",
+        source: "firestore",
+        updatedAt: latestAnalysisWrite,
+      },
+      {
+        id: "data-mode",
+        label: "Data mode",
+        value: fallbackCount > 0 ? `${fallbackCount} fallback` : "Live",
+        status: fallbackCount > 0 ? "warning" : "ok",
+        detail:
+          fallbackCount > 0
+            ? `The UI is using last known Firestore values where fresh data is missing`
+            : `Dashboard is serving live Firestore-backed data`,
+        category: "mode",
+        source: "firestore",
+        freshnessMode: fallbackCount > 0 ? "fallback" : "live",
+      },
+    ],
   };
 }
