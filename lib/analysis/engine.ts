@@ -10,6 +10,9 @@ import { getDashboardSnapshotFromFirestore } from "@/lib/firebase/firestore-anal
 import { writeSystemLog } from "@/lib/firebase/firestore-system-log-service";
 import { cotProviderConfig } from "@/lib/providers/cot/config";
 import { cotProvider } from "@/lib/providers/cot/provider";
+import { mockCotProvider } from "@/lib/providers/mock/cot-provider";
+import { mockPriceProvider } from "@/lib/providers/mock/price-provider";
+import { mockSentimentProvider } from "@/lib/providers/mock/sentiment-provider";
 import { mockVolatilityProvider } from "@/lib/providers/mock/volatility-provider";
 import { priceProviderConfig } from "@/lib/providers/price/config";
 import { priceProvider } from "@/lib/providers/price/provider";
@@ -58,6 +61,37 @@ async function getProviderBundle(instrument: Instrument): Promise<ProviderBundle
   ]);
 
   return { instrument, price, cot, sentiment, volatility };
+}
+
+function forceFallbackFreshness<T extends { freshness: { mode: "live" | "fallback"; updatedAt: string; note: string } }>(
+  snapshot: T,
+  note: string,
+): T {
+  return {
+    ...snapshot,
+    freshness: {
+      ...snapshot.freshness,
+      mode: "fallback",
+      note,
+    },
+  };
+}
+
+async function getEmergencyProviderBundle(instrument: Instrument): Promise<ProviderBundle> {
+  const [price, cot, sentiment, volatility] = await Promise.all([
+    mockPriceProvider.getSnapshot(instrument),
+    mockCotProvider.getSnapshot(instrument),
+    mockSentimentProvider.getSnapshot(instrument),
+    mockVolatilityProvider.getSnapshot(instrument),
+  ]);
+
+  return {
+    instrument,
+    price: forceFallbackFreshness(price, "Firestore was unavailable; using emergency mock price snapshot"),
+    cot: forceFallbackFreshness(cot, "Firestore was unavailable; using emergency mock weekly COT snapshot"),
+    sentiment: forceFallbackFreshness(sentiment, "Firestore was unavailable; using emergency mock retail sentiment snapshot"),
+    volatility: forceFallbackFreshness(volatility, "Firestore was unavailable; using emergency mock volatility snapshot"),
+  };
 }
 
 function buildStatusItems(bundles: ProviderBundle[], fallbackCount: number): SystemStatusItem[] {
@@ -253,20 +287,58 @@ function buildRawMarketDataEntries(bundles: ProviderBundle[]): FirestoreRawMarke
   });
 }
 
-async function fetchBundlesInBatches(batchSize = 10): Promise<ProviderBundle[]> {
+async function fetchBundlesInBatches(
+  selectedInstruments: Instrument[],
+  bundleLoader: (instrument: Instrument) => Promise<ProviderBundle>,
+  batchSize = 10,
+): Promise<ProviderBundle[]> {
   const results: ProviderBundle[] = [];
 
-  for (let i = 0; i < instruments.length; i += batchSize) {
-    const batch = instruments.slice(i, i + batchSize);
-    const batchResults = await Promise.all(batch.map(getProviderBundle));
+  for (let i = 0; i < selectedInstruments.length; i += batchSize) {
+    const batch = selectedInstruments.slice(i, i + batchSize);
+    const batchResults = await Promise.all(batch.map(bundleLoader));
     results.push(...batchResults);
   }
 
   return results;
 }
 
+async function buildTemplateSnapshot(bundles: ProviderBundle[], extraStatusItems: SystemStatusItem[] = []): Promise<DashboardSnapshot> {
+  const analyses = await Promise.all(
+    bundles.map(async ({ instrument, price, cot, sentiment, volatility }) => {
+      const computed = computeAnalysis(price, cot, sentiment, volatility);
+      const analysisBase: AnalysisResult = {
+        instrument,
+        ...computed,
+        aiSummary: "",
+        explanation: "",
+      };
+      const narrative = await templateSummaryProvider.summarize({
+        analysis: analysisBase,
+        factors: {
+          cotNetPosition: cot.netPosition,
+          weeklyTrendBias: price.weeklyTrend.bias,
+          dailyTrendBias: price.dailyTrend.bias,
+          momentumBias: price.fourHourMomentum.bias,
+          retailShort: sentiment.retailShort,
+        },
+      });
+
+      return { ...analysisBase, aiSummary: narrative.summary, explanation: narrative.explanation };
+    }),
+  );
+
+  const sortedAnalyses = analyses.sort(compareAnalysisResults);
+  const fallbackCount = sortedAnalyses.filter((analysis) => analysis.freshness.mode === "fallback").length;
+
+  return {
+    analyses: sortedAnalyses,
+    statusItems: [...buildStatusItems(bundles, fallbackCount), ...extraStatusItems],
+  };
+}
+
 export async function buildComputedDashboardState(): Promise<ComputedDashboardState> {
-  const bundles = await fetchBundlesInBatches(10);
+  const bundles = await fetchBundlesInBatches(instruments, getProviderBundle, 10);
 
   const analyses = await Promise.all(
     bundles.map(async ({ instrument, price, cot, sentiment, volatility }) => {
@@ -309,7 +381,7 @@ export async function buildComputedDashboardState(): Promise<ComputedDashboardSt
   };
 }
 
-/** Maximum time (ms) to wait for a Firestore read before serving a quick fallback. */
+/** Maximum time (ms) to wait for a Firestore read before serving a fallback snapshot. */
 const dashboardReadTimeoutMs = 4_500;
 const dashboardReadTimedOut = Symbol("dashboard-read-timeout");
 
@@ -369,12 +441,12 @@ export async function getDashboardSnapshot(): Promise<DashboardSnapshot> {
       },
     }).catch(() => undefined);
 
-    return prependDashboardStatus(await buildQuickSnapshot(), {
+    return prependDashboardStatus(await buildEmergencyFullSnapshot(), {
       id: "dashboard-read-timeout",
       label: "Stored snapshot delayed",
       value: "Showing fallback snapshot",
       status: "warning",
-      detail: `The latest stored dashboard snapshot took too long to load. Showing ${onDemandInstrumentLimit} major instruments while the Firestore-backed view catches up.`,
+      detail: `The latest stored dashboard snapshot took too long to load. Showing all ${instruments.length} instruments using an emergency fallback snapshot while the Firestore-backed view catches up.`,
       category: "job",
       source: "system",
       updatedAt: new Date().toISOString(),
@@ -390,12 +462,12 @@ export async function getDashboardSnapshot(): Promise<DashboardSnapshot> {
       },
     }).catch(() => undefined);
 
-    return prependDashboardStatus(await buildQuickSnapshot(), {
+    return prependDashboardStatus(await buildEmergencyFullSnapshot(), {
       id: "system-error",
       label: "Temporary data issue",
       value: "Showing fallback snapshot",
       status: "warning",
-      detail: `Could not load the stored dashboard snapshot. Showing ${onDemandInstrumentLimit} major instruments while the Firestore-backed view recovers.`,
+      detail: `Could not load the stored dashboard snapshot. Showing all ${instruments.length} instruments using an emergency fallback snapshot while the Firestore-backed view recovers.`,
       category: "job",
       source: "system",
       updatedAt: new Date().toISOString(),
@@ -409,49 +481,35 @@ export async function getDashboardSnapshot(): Promise<DashboardSnapshot> {
  */
 async function buildQuickSnapshot(): Promise<DashboardSnapshot> {
   const subset = instruments.slice(0, onDemandInstrumentLimit);
-  const bundles = await Promise.all(subset.map(getProviderBundle));
+  const bundles = await fetchBundlesInBatches(subset, getProviderBundle, subset.length);
 
-  const analyses = await Promise.all(
-    bundles.map(async ({ instrument, price, cot, sentiment, volatility }) => {
-      const computed = computeAnalysis(price, cot, sentiment, volatility);
-      const analysisBase: AnalysisResult = {
-        instrument,
-        ...computed,
-        aiSummary: "",
-        explanation: "",
-      };
-      const narrative = await templateSummaryProvider.summarize({
-        analysis: analysisBase,
-        factors: {
-          cotNetPosition: cot.netPosition,
-          weeklyTrendBias: price.weeklyTrend.bias,
-          dailyTrendBias: price.dailyTrend.bias,
-          momentumBias: price.fourHourMomentum.bias,
-          retailShort: sentiment.retailShort,
-        },
-      });
+  return buildTemplateSnapshot(bundles, [
+    {
+      id: "partial-load",
+      label: "Partial coverage",
+      value: `${subset.length} of ${instruments.length}`,
+      status: "warning",
+      detail: `Showing ${subset.length} major instruments until the first stored Firestore snapshot is written. All ${instruments.length} instruments will appear after the analysis runner completes.`,
+      category: "job",
+      source: "system",
+      updatedAt: new Date().toISOString(),
+    },
+  ]);
+}
 
-      return { ...analysisBase, aiSummary: narrative.summary, explanation: narrative.explanation };
-    }),
-  );
+async function buildEmergencyFullSnapshot(): Promise<DashboardSnapshot> {
+  const bundles = await fetchBundlesInBatches(instruments, getEmergencyProviderBundle, instruments.length);
 
-  const sortedAnalyses = analyses.sort(compareAnalysisResults);
-  const fallbackCount = sortedAnalyses.filter((a) => a.freshness.mode === "fallback").length;
-
-  return {
-    analyses: sortedAnalyses,
-    statusItems: [
-      ...buildStatusItems(bundles, fallbackCount),
-      {
-        id: "partial-load",
-        label: "Partial coverage",
-        value: `${subset.length} of ${instruments.length}`,
-        status: "warning",
-        detail: `Showing ${subset.length} major instruments until the first stored Firestore snapshot is written. All ${instruments.length} instruments will appear after the analysis runner completes.`,
-        category: "job",
-        source: "system",
-        updatedAt: new Date().toISOString(),
-      },
-    ],
-  };
+  return buildTemplateSnapshot(bundles, [
+    {
+      id: "full-coverage-fallback",
+      label: "Coverage",
+      value: `${instruments.length} of ${instruments.length}`,
+      status: "warning",
+      detail: `Showing all ${instruments.length} instruments using a Firestore-independent emergency snapshot while the stored Firestore dashboard recovers.`,
+      category: "job",
+      source: "system",
+      updatedAt: new Date().toISOString(),
+    },
+  ]);
 }
