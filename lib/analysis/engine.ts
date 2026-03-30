@@ -309,8 +309,8 @@ export async function buildComputedDashboardState(): Promise<ComputedDashboardSt
   };
 }
 
-/** Maximum time (ms) to wait for a Firestore read before falling back. */
-const dashboardReadTimeoutMs = 8_000;
+/** Maximum time (ms) to wait for a Firestore read before serving a quick fallback. */
+const dashboardReadTimeoutMs = 4_500;
 const dashboardReadTimedOut = Symbol("dashboard-read-timeout");
 
 /**
@@ -318,6 +318,13 @@ const dashboardReadTimedOut = Symbol("dashboard-read-timeout");
  * 7 majors can be fetched + scored well within the Vercel 10 s limit.
  */
 const onDemandInstrumentLimit = 7;
+
+function prependDashboardStatus(snapshot: DashboardSnapshot, statusItem: SystemStatusItem): DashboardSnapshot {
+  return {
+    ...snapshot,
+    statusItems: [statusItem, ...snapshot.statusItems.filter((item) => item.id !== statusItem.id)],
+  };
+}
 
 export async function getDashboardSnapshot(): Promise<DashboardSnapshot> {
   if (!adminDb) {
@@ -362,21 +369,16 @@ export async function getDashboardSnapshot(): Promise<DashboardSnapshot> {
       },
     }).catch(() => undefined);
 
-    return {
-      analyses: [],
-      statusItems: [
-        {
-          id: "dashboard-read-timeout",
-          label: "Stored snapshot delayed",
-          value: "Retrying",
-          status: "warning",
-          detail: "The latest stored dashboard snapshot took too long to load. Refresh in a moment to retry the Firestore-backed view.",
-          category: "job",
-          source: "system",
-          updatedAt: new Date().toISOString(),
-        },
-      ],
-    };
+    return prependDashboardStatus(await buildQuickSnapshot(), {
+      id: "dashboard-read-timeout",
+      label: "Stored snapshot delayed",
+      value: "Showing fallback snapshot",
+      status: "warning",
+      detail: `The latest stored dashboard snapshot took too long to load. Showing ${onDemandInstrumentLimit} major instruments while the Firestore-backed view catches up.`,
+      category: "job",
+      source: "system",
+      updatedAt: new Date().toISOString(),
+    });
   } catch (error) {
     await writeSystemLog({
       level: "error",
@@ -388,29 +390,22 @@ export async function getDashboardSnapshot(): Promise<DashboardSnapshot> {
       },
     }).catch(() => undefined);
 
-    // 3. Unexpected error – avoid switching to a partial on-demand snapshot
-    //    when stored data should have been available.
-    return {
-      analyses: [],
-      statusItems: [
-        {
-          id: "system-error",
-          label: "Temporary data issue",
-          value: "Retrying",
-          status: "warning",
-          detail: "Could not load the stored dashboard snapshot. Refresh shortly to retry the Firestore-backed view.",
-          category: "job",
-          source: "system",
-          updatedAt: new Date().toISOString(),
-        },
-      ],
-    };
+    return prependDashboardStatus(await buildQuickSnapshot(), {
+      id: "system-error",
+      label: "Temporary data issue",
+      value: "Showing fallback snapshot",
+      status: "warning",
+      detail: `Could not load the stored dashboard snapshot. Showing ${onDemandInstrumentLimit} major instruments while the Firestore-backed view recovers.`,
+      category: "job",
+      source: "system",
+      updatedAt: new Date().toISOString(),
+    });
   }
 }
 
 /**
- * Compute a small snapshot (majors only) for the first-load case where
- * Firestore has not been populated yet.
+ * Compute a small snapshot (majors only) for first-load and slow-read cases
+ * where the full Firestore-backed dashboard cannot be served quickly enough.
  */
 async function buildQuickSnapshot(): Promise<DashboardSnapshot> {
   const subset = instruments.slice(0, onDemandInstrumentLimit);
