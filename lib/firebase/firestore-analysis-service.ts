@@ -8,6 +8,7 @@ import type { AnalysisResult, DashboardSnapshot, HistoryPoint, SignalHistoryPoin
 import type {
   AnalysisHistorySeries,
   FirestoreAnalysisHistoryDocument,
+  FirestoreDashboardSnapshotDocument,
   FirestoreInstrumentDocument,
   FirestoreLatestAnalysisDocument,
   FirestoreRawMarketDataDocument,
@@ -15,6 +16,7 @@ import type {
 import { compareAnalysisResults, formatRelativeTime } from "@/lib/utils/format";
 
 const maxFirestoreBatchWrites = 450;
+const dashboardSnapshotDocumentId = "latest";
 
 function isStale(updatedAt: string) {
   return Date.now() - new Date(updatedAt).getTime() > firestoreAnalysisConfig.staleAfterHours * 60 * 60 * 1000;
@@ -46,7 +48,7 @@ function getRecordedAt(baseIsoDate: string, index: number, maxLength: number) {
   return new Date(baseTime - hoursBack * 60 * 60 * 1000).toISOString();
 }
 
-function toLatestAnalysisDocument(analysis: AnalysisResult): FirestoreLatestAnalysisDocument {
+function toLatestAnalysisDocument(analysis: AnalysisResult, writtenAt: string): FirestoreLatestAnalysisDocument {
   return {
     ticker: analysis.instrument.ticker,
     instrument: analysis.instrument,
@@ -69,17 +71,17 @@ function toLatestAnalysisDocument(analysis: AnalysisResult): FirestoreLatestAnal
     factorContributions: analysis.factorContributions,
     ...(analysis.nokDisplay ? { nokDisplay: analysis.nokDisplay } : {}),
     source: firestoreAnalysisConfig.sourceLabel,
-    writtenAt: new Date().toISOString(),
+    writtenAt,
   };
 }
 
-function toInstrumentDocument(analysis: AnalysisResult): FirestoreInstrumentDocument {
+function toInstrumentDocument(analysis: AnalysisResult, writtenAt: string): FirestoreInstrumentDocument {
   return {
     ticker: analysis.instrument.ticker,
     name: analysis.instrument.name,
     assetClass: analysis.instrument.assetClass,
     active: true,
-    updatedAt: new Date().toISOString(),
+    updatedAt: writtenAt,
   };
 }
 
@@ -168,11 +170,94 @@ function toAnalysisResult(doc: FirestoreLatestAnalysisDocument, history: Analysi
   };
 }
 
+function refreshStatusItems(items: FirestoreDashboardSnapshotDocument["statusItems"]) {
+  return items.map((item) => ({
+    ...item,
+    value: item.updatedAt ? formatRelativeTime(item.updatedAt) : item.value,
+  }));
+}
+
+function toDashboardSnapshot(latestDocs: FirestoreLatestAnalysisDocument[], statusItems: DashboardSnapshot["statusItems"]): DashboardSnapshot {
+  const analyses = latestDocs
+    .map((doc) => toAnalysisResult(doc, defaultHistoryFromLatest(doc)))
+    .sort(compareAnalysisResults);
+
+  return {
+    analyses,
+    statusItems,
+  };
+}
+
+function toDashboardSnapshotDocument(snapshot: DashboardSnapshot, writtenAt: string): FirestoreDashboardSnapshotDocument {
+  return {
+    analyses: snapshot.analyses.map((analysis) => toLatestAnalysisDocument(analysis, writtenAt)),
+    statusItems: snapshot.statusItems,
+    source: firestoreAnalysisConfig.sourceLabel,
+    writtenAt,
+    schemaVersion: 1,
+  };
+}
+
+async function getDashboardSnapshotDocumentFromFirestore(): Promise<DashboardSnapshot | null> {
+  const db = adminDb;
+  if (!db) return null;
+
+  const snapshot = await db.collection(firestoreCollections.dashboardSnapshots).doc(dashboardSnapshotDocumentId).get();
+  if (!snapshot.exists) return null;
+
+  const data = snapshot.data() as FirestoreDashboardSnapshotDocument | undefined;
+  if (!data?.analyses?.length) return null;
+
+  return toDashboardSnapshot(data.analyses, refreshStatusItems(data.statusItems ?? []));
+}
+
+async function getDashboardSnapshotFromLatestAnalysisCollection(): Promise<DashboardSnapshot | null> {
+  const db = adminDb;
+  if (!db) return null;
+
+  const latestSnapshot = await db.collection(firestoreCollections.latestAnalysis).get();
+  if (latestSnapshot.empty) return null;
+
+  const latestDocs = latestSnapshot.docs.map((doc) => doc.data() as FirestoreLatestAnalysisDocument);
+  const fallbackCount = latestDocs.filter((doc) => withFallbackFreshness(doc).mode === "fallback").length;
+  const latestAnalysisWrite = latestDocs.map((d) => d.writtenAt).sort().at(-1) ?? new Date().toISOString();
+
+  return toDashboardSnapshot(latestDocs, [
+    {
+      id: "analysis-job",
+      label: "Latest analysis job",
+      value: formatRelativeTime(latestAnalysisWrite),
+      status: fallbackCount > 0 ? "warning" : "ok",
+      detail:
+        fallbackCount > 0
+          ? `${latestDocs.length} instruments available, some serving fallback values`
+          : `${latestDocs.length} instruments available and within the freshness window`,
+      category: "job",
+      source: "firestore",
+      updatedAt: latestAnalysisWrite,
+    },
+    {
+      id: "data-mode",
+      label: "Data mode",
+      value: fallbackCount > 0 ? `${fallbackCount} fallback` : "Live",
+      status: fallbackCount > 0 ? "warning" : "ok",
+      detail:
+        fallbackCount > 0
+          ? `The UI is using last known Firestore values where fresh data is missing`
+          : `Dashboard is serving live Firestore-backed data`,
+      category: "mode",
+      source: "firestore",
+      freshnessMode: fallbackCount > 0 ? "fallback" : "live",
+    },
+  ]);
+}
+
 export async function seedFirestoreAnalysisStore(snapshot: DashboardSnapshot, rawMarketData: FirestoreRawMarketDataDocument[]) {
   const db = adminDb;
   if (!db) return;
 
   const firestore = db;
+  const writtenAt = new Date().toISOString();
   let batch = firestore.batch();
   let writeCount = 0;
   let committedBatchCount = 0;
@@ -195,12 +280,15 @@ export async function seedFirestoreAnalysisStore(snapshot: DashboardSnapshot, ra
     }
   }
 
+  const dashboardSnapshotRef = firestore.collection(firestoreCollections.dashboardSnapshots).doc(dashboardSnapshotDocumentId);
+  await queueSet(dashboardSnapshotRef, toDashboardSnapshotDocument(snapshot, writtenAt));
+
   for (const analysis of snapshot.analyses) {
     const instrumentRef = firestore.collection(firestoreCollections.instruments).doc(analysis.instrument.ticker);
     const latestRef = firestore.collection(firestoreCollections.latestAnalysis).doc(analysis.instrument.ticker);
 
-    await queueSet(instrumentRef, toInstrumentDocument(analysis));
-    await queueSet(latestRef, toLatestAnalysisDocument(analysis));
+    await queueSet(instrumentRef, toInstrumentDocument(analysis, writtenAt));
+    await queueSet(latestRef, toLatestAnalysisDocument(analysis, writtenAt));
 
     for (const entry of toHistoryDocuments(analysis)) {
       const historyRef = firestore
@@ -224,64 +312,19 @@ export async function seedFirestoreAnalysisStore(snapshot: DashboardSnapshot, ra
       rawEntries: rawMarketData.length,
       historyLimit: firestoreAnalysisConfig.historyLimit,
       batchCommits: committedBatchCount,
+      dashboardSnapshotDocument: dashboardSnapshotDocumentId,
     },
   });
 }
 
 /**
- * Light dashboard read: fetches only the `latestAnalysis` collection (single
- * query) and derives minimal history from each document.  This avoids the N+1
- * subcollection reads (history + rawMarketData) that previously caused Vercel
- * serverless timeouts for 50+ instruments.
+ * Dashboard read path: prefer the single aggregated snapshot document, then
+ * fall back to the legacy `latestAnalysis` collection until the next runner
+ * has populated the new document.
  */
 export async function getDashboardSnapshotFromFirestore(): Promise<DashboardSnapshot | null> {
-  const db = adminDb;
-  if (!db) return null;
+  const storedSnapshot = await getDashboardSnapshotDocumentFromFirestore();
+  if (storedSnapshot) return storedSnapshot;
 
-  const latestSnapshot = await db.collection(firestoreCollections.latestAnalysis).get();
-  if (latestSnapshot.empty) return null;
-
-  const latestDocs = latestSnapshot.docs.map((doc) => doc.data() as FirestoreLatestAnalysisDocument);
-
-  // Serve the stored snapshot as-is. Dashboard reads must not trigger extra
-  // network enrichment, otherwise a "fast" Firestore read can regress into a
-  // slow request that falls back to partial on-demand coverage.
-  const analyses = latestDocs
-    .map((doc) => toAnalysisResult(doc, defaultHistoryFromLatest(doc)))
-    .sort(compareAnalysisResults);
-
-  const fallbackCount = analyses.filter((a) => a.freshness.mode === "fallback").length;
-  const latestAnalysisWrite = latestDocs.map((d) => d.writtenAt).sort().at(-1) ?? new Date().toISOString();
-
-  return {
-    analyses,
-    statusItems: [
-      {
-        id: "analysis-job",
-        label: "Latest analysis job",
-        value: formatRelativeTime(latestAnalysisWrite),
-        status: fallbackCount > 0 ? "warning" : "ok",
-        detail:
-          fallbackCount > 0
-            ? `${latestDocs.length} instruments available, some serving fallback values`
-            : `${latestDocs.length} instruments available and within the freshness window`,
-        category: "job",
-        source: "firestore",
-        updatedAt: latestAnalysisWrite,
-      },
-      {
-        id: "data-mode",
-        label: "Data mode",
-        value: fallbackCount > 0 ? `${fallbackCount} fallback` : "Live",
-        status: fallbackCount > 0 ? "warning" : "ok",
-        detail:
-          fallbackCount > 0
-            ? `The UI is using last known Firestore values where fresh data is missing`
-            : `Dashboard is serving live Firestore-backed data`,
-        category: "mode",
-        source: "firestore",
-        freshnessMode: fallbackCount > 0 ? "fallback" : "live",
-      },
-    ],
-  };
+  return getDashboardSnapshotFromLatestAnalysisCollection();
 }

@@ -1,4 +1,4 @@
-import type { AnalysisResult, AssetClass, DataFreshness, FactorContribution, Instrument, SignalType, TradeSetupQuality } from "@/lib/types/analysis";
+import type { AnalysisResult, AssetClass, DataFreshness, FactorContribution, Instrument, SignalType, SystemStatusItem, TradeSetupQuality } from "@/lib/types/analysis";
 
 export interface FirestoreInstrumentDocument {
   ticker: string;
@@ -31,6 +31,14 @@ export interface FirestoreLatestAnalysisDocument {
   nokDisplay?: AnalysisResult["nokDisplay"];
   source: string;
   writtenAt: string;
+}
+
+export interface FirestoreDashboardSnapshotDocument {
+  analyses: FirestoreLatestAnalysisDocument[];
+  statusItems: SystemStatusItem[];
+  source: string;
+  writtenAt: string;
+  schemaVersion: 1;
 }
 
 export interface FirestoreAnalysisHistoryDocument {
