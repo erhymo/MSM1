@@ -18,6 +18,7 @@ import type {
 import { compareAnalysisResults, formatRelativeTime } from "@/lib/utils/format";
 
 const statusFeedCategories: RawMarketDataCategory[] = ["price", "cot", "sentiment"];
+const maxFirestoreBatchWrites = 450;
 
 function isStale(updatedAt: string) {
   return Date.now() - new Date(updatedAt).getTime() > firestoreAnalysisConfig.staleAfterHours * 60 * 60 * 1000;
@@ -87,20 +88,26 @@ function toInstrumentDocument(analysis: AnalysisResult): FirestoreInstrumentDocu
 }
 
 function toHistoryDocuments(analysis: AnalysisResult): FirestoreAnalysisHistoryDocument[] {
+  const priceHistory = analysis.priceHistory.slice(-firestoreAnalysisConfig.historyLimit);
+  const confidenceHistory = analysis.confidenceHistory.slice(-firestoreAnalysisConfig.historyLimit);
+  const signalHistory = analysis.signalHistory.slice(-firestoreAnalysisConfig.historyLimit);
+  const sentimentHistory = analysis.sentimentHistory?.slice(-firestoreAnalysisConfig.historyLimit);
+  const cotHistory = analysis.cotHistory?.slice(-firestoreAnalysisConfig.historyLimit);
+
   const maxLength = Math.max(
-    analysis.priceHistory.length,
-    analysis.confidenceHistory.length,
-    analysis.signalHistory.length,
-    analysis.sentimentHistory?.length ?? 0,
-    analysis.cotHistory?.length ?? 0,
+    priceHistory.length,
+    confidenceHistory.length,
+    signalHistory.length,
+    sentimentHistory?.length ?? 0,
+    cotHistory?.length ?? 0,
   );
 
   return Array.from({ length: maxLength }, (_, index) => {
-    const pricePoint = getAlignedPoint(analysis.priceHistory, index, maxLength);
-    const confidencePoint = getAlignedPoint(analysis.confidenceHistory, index, maxLength);
-    const signalPoint = getAlignedPoint(analysis.signalHistory, index, maxLength);
-    const sentimentPoint = getAlignedPoint(analysis.sentimentHistory, index, maxLength);
-    const cotPoint = getAlignedPoint(analysis.cotHistory, index, maxLength);
+    const pricePoint = getAlignedPoint(priceHistory, index, maxLength);
+    const confidencePoint = getAlignedPoint(confidenceHistory, index, maxLength);
+    const signalPoint = getAlignedPoint(signalHistory, index, maxLength);
+    const sentimentPoint = getAlignedPoint(sentimentHistory, index, maxLength);
+    const cotPoint = getAlignedPoint(cotHistory, index, maxLength);
 
     return {
       ticker: analysis.instrument.ticker,
@@ -295,27 +302,47 @@ export async function seedFirestoreAnalysisStore(snapshot: DashboardSnapshot, ra
   const db = adminDb;
   if (!db) return;
 
-  const batch = db.batch();
+  let batch = db.batch();
+  let writeCount = 0;
+  let committedBatchCount = 0;
 
-  snapshot.analyses.forEach((analysis) => {
+  async function commitBatch() {
+    if (!writeCount) return;
+
+    await batch.commit();
+    batch = db.batch();
+    writeCount = 0;
+    committedBatchCount += 1;
+  }
+
+  async function queueSet<T>(ref: FirebaseFirestore.DocumentReference<T>, value: T) {
+    batch.set(ref, value, { merge: true });
+    writeCount += 1;
+
+    if (writeCount >= maxFirestoreBatchWrites) {
+      await commitBatch();
+    }
+  }
+
+  for (const analysis of snapshot.analyses) {
     const instrumentRef = db.collection(firestoreCollections.instruments).doc(analysis.instrument.ticker);
     const latestRef = db.collection(firestoreCollections.latestAnalysis).doc(analysis.instrument.ticker);
 
-    batch.set(instrumentRef, toInstrumentDocument(analysis), { merge: true });
-    batch.set(latestRef, toLatestAnalysisDocument(analysis), { merge: true });
+    await queueSet(instrumentRef, toInstrumentDocument(analysis));
+    await queueSet(latestRef, toLatestAnalysisDocument(analysis));
 
-    toHistoryDocuments(analysis).forEach((entry) => {
+    for (const entry of toHistoryDocuments(analysis)) {
       const historyRef = db
         .collection(firestoreCollections.analysisHistory)
         .doc(analysis.instrument.ticker)
         .collection("entries")
         .doc(`${entry.sequence}-${entry.recordedAt.replace(/[:.]/g, "-")}`);
 
-      batch.set(historyRef, entry, { merge: true });
-    });
-  });
+      await queueSet(historyRef, entry);
+    }
+  }
 
-  await batch.commit();
+  await commitBatch();
   await storeRawMarketData(rawMarketData);
   await writeSystemLog({
     level: "info",
@@ -324,6 +351,8 @@ export async function seedFirestoreAnalysisStore(snapshot: DashboardSnapshot, ra
     details: {
       instruments: snapshot.analyses.length,
       rawEntries: rawMarketData.length,
+      historyLimit: firestoreAnalysisConfig.historyLimit,
+      batchCommits: committedBatchCount,
     },
   });
 }

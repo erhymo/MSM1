@@ -5,6 +5,7 @@ import { adminDb } from "@/lib/firebase/admin";
 import type { FirestoreRawMarketDataDocument, RawMarketDataCategory } from "@/lib/types/firestore";
 import { writeSystemLog } from "@/lib/firebase/firestore-system-log-service";
 
+const maxFirestoreBatchWrites = 450;
 const rawMarketCategoryLookupLimit = Math.max(
   firestoreAnalysisConfig.historyLimit,
   Math.ceil((8 * 24) / firestoreAnalysisConfig.staleAfterHours) * 4,
@@ -18,9 +19,20 @@ export async function storeRawMarketData(entries: FirestoreRawMarketDataDocument
   const db = adminDb;
   if (!db || !entries.length) return;
 
-  const batch = db.batch();
+  let batch = db.batch();
+  let writeCount = 0;
+  let committedBatchCount = 0;
 
-  entries.forEach((entry) => {
+  async function commitBatch() {
+    if (!writeCount) return;
+
+    await batch.commit();
+    batch = db.batch();
+    writeCount = 0;
+    committedBatchCount += 1;
+  }
+
+  for (const entry of entries) {
     const ref = db
       .collection(firestoreCollections.rawMarketData)
       .doc(entry.ticker)
@@ -28,9 +40,14 @@ export async function storeRawMarketData(entries: FirestoreRawMarketDataDocument
       .doc(toDocId(entry));
 
     batch.set(ref, entry, { merge: true });
-  });
+    writeCount += 1;
 
-  await batch.commit();
+    if (writeCount >= maxFirestoreBatchWrites) {
+      await commitBatch();
+    }
+  }
+
+  await commitBatch();
 
   await writeSystemLog({
     level: "info",
@@ -39,6 +56,7 @@ export async function storeRawMarketData(entries: FirestoreRawMarketDataDocument
     details: {
       entries: entries.length,
       historyLimit: firestoreAnalysisConfig.historyLimit,
+      batchCommits: committedBatchCount,
     },
   });
 }
