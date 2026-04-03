@@ -411,6 +411,10 @@ function getOilAlertReason(decision: OilAlertDashboardDecision) {
       return "Baseline stored. The next live run will compare Brent and Polymarket deltas.";
     case "skipped-non-live-price":
       return "Latest run skipped because Brent price input was not live.";
+    case "skipped-stale-price":
+      return "Latest run skipped because Brent price input was older than the configured freshness limit.";
+    case "skipped-stale-polymarket":
+      return "Latest run skipped because too few Polymarket markets were fresh and active enough.";
     case "insufficient-move":
       return "Latest run stayed below the minimum Brent move threshold.";
     case "insufficient-confidence":

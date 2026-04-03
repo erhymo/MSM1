@@ -10,6 +10,7 @@ import { sendOilAlertEmail } from "@/lib/email/sendgrid";
 import { gdeltNewsProvider } from "@/lib/providers/news/gdelt-provider";
 import { polymarketProvider } from "@/lib/providers/polymarket/provider";
 import { priceProvider } from "@/lib/providers/price/provider";
+import type { PolymarketMarketSnapshot } from "@/lib/providers/polymarket/provider";
 import type { FirestoreOilAlertObservedMarketDocument, FirestoreOilAlertStateDocument } from "@/lib/types/firestore";
 
 function clamp(value: number, min: number, max: number) {
@@ -27,6 +28,25 @@ function getDurationMs(startedAt: string, completedAt: string) {
 function getPercentChange(current: number, previous: number) {
   if (!previous) return 0;
   return ((current - previous) / previous) * 100;
+}
+
+function getAgeMs(updatedAt: string, referenceTime: string) {
+  const updated = new Date(updatedAt).getTime();
+  const reference = new Date(referenceTime).getTime();
+  if (!Number.isFinite(updated) || !Number.isFinite(reference)) return Number.POSITIVE_INFINITY;
+  return Math.max(0, reference - updated);
+}
+
+function getAgeHours(updatedAt: string, referenceTime: string) {
+  return round(getAgeMs(updatedAt, referenceTime) / (60 * 60 * 1000), 2);
+}
+
+function isFreshEnough(updatedAt: string, maxAgeHours: number, referenceTime: string) {
+  return getAgeMs(updatedAt, referenceTime) <= maxAgeHours * 60 * 60 * 1000;
+}
+
+function isActiveFreshMarket(snapshot: PolymarketMarketSnapshot, referenceTime: string) {
+  return snapshot.active && !snapshot.closed && isFreshEnough(snapshot.updatedAt, oilAlertConfig.maxPolymarketAgeHours, referenceTime);
 }
 
 function getBrentInstrument() {
@@ -224,11 +244,17 @@ export async function runOilAlertCheck(trigger: OilAlertRunTrigger, options: Oil
       : Promise.resolve([]),
   ]);
 
+  const priceAgeHours = getAgeHours(priceSnapshot.updatedAt, startedAt);
+  const priceFreshEnough = priceSnapshot.freshness.mode === "live" && isFreshEnough(priceSnapshot.updatedAt, oilAlertConfig.maxPriceAgeHours, startedAt);
+  const freshMarketSnapshots = marketSnapshots.filter((snapshot) => isActiveFreshMarket(snapshot, startedAt));
+  const staleOrInactiveMarkets = marketSnapshots.filter((snapshot) => !isActiveFreshMarket(snapshot, startedAt));
+  const freshHeadlines = rawHeadlines.filter((headline) => isFreshEnough(headline.publishedAt, oilAlertConfig.maxHeadlineAgeHours, startedAt));
+
   const priceMovePercent = previousState ? getPercentChange(priceSnapshot.currentPrice, previousState.lastLivePrice) : 0;
 
   const marketSignals = oilAlertConfig.markets
     .flatMap((marketConfig) => {
-      const snapshot = marketSnapshots.find((entry) => entry.marketId === marketConfig.marketId);
+      const snapshot = freshMarketSnapshots.find((entry) => entry.marketId === marketConfig.marketId);
       if (!snapshot) return [];
 
       const previousMarket = previousState?.lastPolymarketMarkets.find((entry) => entry.marketId === marketConfig.marketId);
@@ -262,7 +288,7 @@ export async function runOilAlertCheck(trigger: OilAlertRunTrigger, options: Oil
   const marketDirection = bullishStrength === bearishStrength ? null : bullishStrength > bearishStrength ? "bullish" : "bearish";
   const dominantMarketStrength = Math.max(bullishStrength, bearishStrength);
   const priceDirection = getDirectionFromSignedValue(priceMovePercent);
-  const scoredHeadlines: OilAlertHeadlineSignal[] = rawHeadlines
+  const scoredHeadlines: OilAlertHeadlineSignal[] = freshHeadlines
     .map((headline) => {
       const scored = scoreHeadline(headline.title);
       return {
@@ -297,7 +323,7 @@ export async function runOilAlertCheck(trigger: OilAlertRunTrigger, options: Oil
     direction: priceDirection,
     emailSent: false,
     marketsChecked: marketSignals.length,
-    liveInputs: priceSnapshot.freshness.mode === "live",
+    liveInputs: priceFreshEnough && freshMarketSnapshots.length >= oilAlertConfig.minFreshPolymarketMarkets,
     newsScore,
     price: {
       current: priceSnapshot.currentPrice,
@@ -317,6 +343,35 @@ export async function runOilAlertCheck(trigger: OilAlertRunTrigger, options: Oil
       status: "warning",
       decision: "skipped-non-live-price",
       reason: "Brent snapshot is fallback/stale, so alerts are suppressed",
+    });
+
+    if (!dryRun) {
+      await appendOilAlertHistory(result).catch(() => undefined);
+    }
+    return result;
+  }
+
+  if (!priceFreshEnough) {
+    const result = buildResult({
+      ...baseResult,
+      status: "warning",
+      decision: "skipped-stale-price",
+      reason: `Brent snapshot is ${priceAgeHours}h old, above the ${oilAlertConfig.maxPriceAgeHours}h freshness limit`,
+    });
+
+    if (!dryRun) {
+      await appendOilAlertHistory(result).catch(() => undefined);
+    }
+    return result;
+  }
+
+  if (freshMarketSnapshots.length < oilAlertConfig.minFreshPolymarketMarkets) {
+    const staleList = staleOrInactiveMarkets.map((market) => market.marketId).join(", ") || "none";
+    const result = buildResult({
+      ...baseResult,
+      status: "warning",
+      decision: "skipped-stale-polymarket",
+      reason: `Only ${freshMarketSnapshots.length} Polymarket markets passed freshness/active checks; need ${oilAlertConfig.minFreshPolymarketMarkets}. Filtered: ${staleList}`,
     });
 
     if (!dryRun) {

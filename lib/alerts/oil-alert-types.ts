@@ -4,6 +4,8 @@ export type OilAlertDecision =
   | "disabled"
   | "seeded"
   | "skipped-non-live-price"
+  | "skipped-stale-price"
+  | "skipped-stale-polymarket"
   | "insufficient-move"
   | "insufficient-confidence"
   | "cooldown"

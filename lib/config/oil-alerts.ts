@@ -8,6 +8,30 @@ export type OilAlertMarketConfig = {
   thesis: string;
 };
 
+const configuredMarkets = [
+  {
+    marketId: "567621",
+    label: "China/Taiwan invasion risk (2026)",
+    weight: 1,
+    yesOutcomeOilBias: "bullish",
+    thesis: "Higher odds of a China/Taiwan conflict typically increase oil risk premium.",
+  },
+  {
+    marketId: "567687",
+    label: "Russia/Ukraine ceasefire (2026)",
+    weight: 0.85,
+    yesOutcomeOilBias: "bearish",
+    thesis: "Higher ceasefire odds can reduce geopolitical oil risk premium.",
+  },
+  {
+    marketId: "567688",
+    label: "Netanyahu out by end of 2026",
+    weight: 0.45,
+    yesOutcomeOilBias: "bearish",
+    thesis: "Lower regional tension risk is mildly bearish for oil risk premium.",
+  },
+] satisfies OilAlertMarketConfig[];
+
 function toBoolean(value: string | undefined, fallback: boolean) {
   if (!value) return fallback;
   return value.toLowerCase() === "true";
@@ -25,30 +49,12 @@ export const oilAlertConfig = {
   minConfidence: toNumber(process.env.OIL_ALERT_MIN_CONFIDENCE, 70, 1),
   minPriceMovePercent: toNumber(process.env.OIL_ALERT_MIN_PRICE_MOVE_PERCENT, 0.9, 0.1),
   minPolymarketMovePp: toNumber(process.env.OIL_ALERT_MIN_POLYMARKET_MOVE_PP, 3, 0.1),
+  maxPriceAgeHours: toNumber(process.env.OIL_ALERT_MAX_PRICE_AGE_HOURS, 18, 1),
+  maxPolymarketAgeHours: toNumber(process.env.OIL_ALERT_MAX_POLYMARKET_AGE_HOURS, 6, 1),
+  minFreshPolymarketMarkets: Math.min(configuredMarkets.length, Math.floor(toNumber(process.env.OIL_ALERT_MIN_FRESH_POLYMARKET_MARKETS, 2, 1))),
   headlinesEnabled: toBoolean(process.env.OIL_ALERT_HEADLINES_ENABLED, true),
-  markets: [
-    {
-      marketId: "567621",
-      label: "China/Taiwan invasion risk (2026)",
-      weight: 1,
-      yesOutcomeOilBias: "bullish",
-      thesis: "Higher odds of a China/Taiwan conflict typically increase oil risk premium.",
-    },
-    {
-      marketId: "567687",
-      label: "Russia/Ukraine ceasefire (2026)",
-      weight: 0.85,
-      yesOutcomeOilBias: "bearish",
-      thesis: "Higher ceasefire odds can reduce geopolitical oil risk premium.",
-    },
-    {
-      marketId: "567688",
-      label: "Netanyahu out by end of 2026",
-      weight: 0.45,
-      yesOutcomeOilBias: "bearish",
-      thesis: "Lower regional tension risk is mildly bearish for oil risk premium.",
-    },
-  ] satisfies OilAlertMarketConfig[],
+  maxHeadlineAgeHours: toNumber(process.env.OIL_ALERT_MAX_HEADLINE_AGE_HOURS, 24, 1),
+  markets: configuredMarkets,
   headlines: {
     maxRecords: toNumber(process.env.OIL_ALERT_HEADLINES_MAX_RECORDS, 8, 1),
     oilKeywords: ["oil", "brent", "crude", "energy"],

@@ -11,6 +11,8 @@ const decisionLabels: Record<OilAlertDashboardDecision, string> = {
   "not-seeded": "Not seeded",
   seeded: "Seeded",
   "skipped-non-live-price": "Waiting for live price",
+  "skipped-stale-price": "Price too old",
+  "skipped-stale-polymarket": "Markets too old",
   "insufficient-move": "Below move threshold",
   "insufficient-confidence": "Below confidence threshold",
   cooldown: "Cooldown",
@@ -34,6 +36,7 @@ function getStatusLabel(oilAlert?: OilAlertDashboardSummary | null) {
   if (!oilAlert) return "Unavailable";
   if (!oilAlert.enabled) return "Paused";
   if (oilAlert.decision === "not-seeded") return "Awaiting seed";
+  if (oilAlert.decision === "skipped-stale-price" || oilAlert.decision === "skipped-stale-polymarket") return "Blocked by freshness";
   if (oilAlert.cooldownUntil && new Date(oilAlert.cooldownUntil).getTime() > Date.now()) return "Cooldown";
   if (oilAlert.decision === "triggered") return "Triggered";
   return "Monitoring";
@@ -49,6 +52,7 @@ function getStatusTone(oilAlert?: OilAlertDashboardSummary | null) {
   if (!oilAlert) return "bg-white/5 text-slate-200";
   if (!oilAlert.enabled) return "bg-slate-500/10 text-slate-200";
   if (oilAlert.decision === "triggered") return oilAlert.direction === "bearish" ? "bg-rose-500/10 text-rose-100" : "bg-emerald-500/10 text-emerald-100";
+  if (oilAlert.decision === "skipped-stale-price" || oilAlert.decision === "skipped-stale-polymarket") return "bg-amber-500/10 text-amber-100";
   if (oilAlert.decision === "cooldown") return "bg-amber-500/10 text-amber-100";
   return "bg-cyan-500/10 text-cyan-100";
 }
