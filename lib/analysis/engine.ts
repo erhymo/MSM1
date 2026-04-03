@@ -5,7 +5,9 @@ import { templateSummaryProvider } from "@/lib/ai/template-summary-provider";
 import { enrichAnalysesWithNokDisplay } from "@/lib/analysis/nok-display";
 import { computeAnalysis } from "@/lib/analysis/scoring";
 import { instruments } from "@/lib/config/instruments";
+import { oilAlertConfig } from "@/lib/config/oil-alerts";
 import { adminDb } from "@/lib/firebase/admin";
+import { getLatestOilAlertHistory, getOilAlertState } from "@/lib/firebase/firestore-alert-service";
 import { getDashboardSnapshotFromFirestore } from "@/lib/firebase/firestore-analysis-service";
 import { writeSystemLog } from "@/lib/firebase/firestore-system-log-service";
 import { cotProviderConfig } from "@/lib/providers/cot/config";
@@ -18,8 +20,8 @@ import { priceProviderConfig } from "@/lib/providers/price/config";
 import { priceProvider } from "@/lib/providers/price/provider";
 import { sentimentProviderConfig } from "@/lib/providers/sentiment/config";
 import { sentimentProvider } from "@/lib/providers/sentiment/provider";
-import type { AnalysisResult, COTSnapshot, DashboardSnapshot, Instrument, PriceSnapshot, SentimentSnapshot, SystemStatusItem, VolatilitySnapshot } from "@/lib/types/analysis";
-import type { FirestoreRawMarketDataDocument } from "@/lib/types/firestore";
+import type { AnalysisResult, COTSnapshot, DashboardSnapshot, Instrument, OilAlertDashboardDecision, OilAlertDashboardSummary, PriceSnapshot, SentimentSnapshot, SystemStatusItem, VolatilitySnapshot } from "@/lib/types/analysis";
+import type { FirestoreOilAlertHistoryDocument, FirestoreOilAlertStateDocument, FirestoreRawMarketDataDocument } from "@/lib/types/firestore";
 import { compareAnalysisResults, formatRelativeTime } from "@/lib/utils/format";
 
 export type ComputedDashboardState = {
@@ -383,6 +385,7 @@ export async function buildComputedDashboardState(): Promise<ComputedDashboardSt
 
 /** Maximum time (ms) to wait for a Firestore read before serving a fallback snapshot. */
 const dashboardReadTimeoutMs = 4_500;
+const oilAlertReadTimeoutMs = 1_500;
 const dashboardReadTimedOut = Symbol("dashboard-read-timeout");
 
 /**
@@ -398,10 +401,132 @@ function prependDashboardStatus(snapshot: DashboardSnapshot, statusItem: SystemS
   };
 }
 
+function getOilAlertReason(decision: OilAlertDashboardDecision) {
+  switch (decision) {
+    case "disabled":
+      return "Oil alert engine is disabled in server config.";
+    case "not-seeded":
+      return "No oil alert baseline has been stored yet. The first live cron run will seed Brent and Polymarket state.";
+    case "seeded":
+      return "Baseline stored. The next live run will compare Brent and Polymarket deltas.";
+    case "skipped-non-live-price":
+      return "Latest run skipped because Brent price input was not live.";
+    case "insufficient-move":
+      return "Latest run stayed below the minimum Brent move threshold.";
+    case "insufficient-confidence":
+      return "Signal conditions were live, but total confidence stayed below the alert threshold.";
+    case "cooldown":
+      return "Alert engine is in cooldown after a recent trigger.";
+    case "duplicate":
+      return "Latest scenario matched a recently sent alert.";
+    case "triggered":
+      return "Oil alert triggered on the latest live run.";
+  }
+}
+
+function buildOilAlertSummary(
+  state: FirestoreOilAlertStateDocument | null,
+  history: FirestoreOilAlertHistoryDocument | null,
+): OilAlertDashboardSummary {
+  if (history) {
+    return {
+      alertId: history.alertId,
+      enabled: oilAlertConfig.enabled,
+      decision: history.decision,
+      reason: history.reason,
+      confidence: history.confidence,
+      direction: history.direction,
+      lastObservedAt: state?.lastObservedAt ?? history.completedAt,
+      lastRunAt: history.completedAt,
+      lastSentAt: state?.lastSentAt,
+      cooldownUntil: history.cooldownUntil ?? state?.cooldownUntil,
+      emailSent: history.emailSent,
+      liveInputs: history.liveInputs,
+      newsScore: history.newsScore,
+      price: history.price,
+      topSignals: history.topSignals,
+      topHeadlines: history.topHeadlines,
+    };
+  }
+
+  if (state) {
+    return {
+      alertId: state.alertId,
+      enabled: oilAlertConfig.enabled,
+      decision: state.lastDecision,
+      reason: getOilAlertReason(state.lastDecision),
+      confidence: state.lastConfidence,
+      direction: state.lastDirection ?? null,
+      lastObservedAt: state.lastObservedAt,
+      lastRunAt: state.updatedAt,
+      lastSentAt: state.lastSentAt,
+      cooldownUntil: state.cooldownUntil,
+      emailSent: false,
+      liveInputs: true,
+      newsScore: 0,
+      price: {
+        current: state.lastLivePrice,
+        movePercent: 0,
+        updatedAt: state.lastPriceUpdatedAt,
+        source: state.lastPriceSource,
+        freshnessMode: "live",
+      },
+      topSignals: state.lastPolymarketMarkets.map((market) => ({
+        marketId: market.marketId,
+        label: market.label,
+        question: market.question,
+        weight: market.weight,
+        yesProbability: market.yesProbability,
+        impliedDirection: null,
+      })),
+      topHeadlines: [],
+    };
+  }
+
+  return {
+    alertId: oilAlertConfig.alertId,
+    enabled: oilAlertConfig.enabled,
+    decision: oilAlertConfig.enabled ? "not-seeded" : "disabled",
+    reason: getOilAlertReason(oilAlertConfig.enabled ? "not-seeded" : "disabled"),
+    confidence: 0,
+    direction: null,
+    emailSent: false,
+    liveInputs: false,
+    newsScore: 0,
+    topSignals: [],
+    topHeadlines: [],
+  };
+}
+
+async function getOptionalOilAlertSummary(): Promise<OilAlertDashboardSummary | null> {
+  return Promise.race([
+    (async () => {
+      if (!adminDb) {
+        return oilAlertConfig.enabled ? null : buildOilAlertSummary(null, null);
+      }
+
+      const [state, history] = await Promise.all([
+        getOilAlertState(oilAlertConfig.alertId).catch(() => null),
+        getLatestOilAlertHistory(oilAlertConfig.alertId).catch(() => null),
+      ]);
+
+      return buildOilAlertSummary(state, history);
+    })().catch(() => null),
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), oilAlertReadTimeoutMs)),
+  ]);
+}
+
+async function attachOilAlertSummary(snapshot: DashboardSnapshot, pendingSummary: Promise<OilAlertDashboardSummary | null>) {
+  const oilAlert = await pendingSummary;
+  return oilAlert ? { ...snapshot, oilAlert } : snapshot;
+}
+
 export async function getDashboardSnapshot(): Promise<DashboardSnapshot> {
+  const pendingOilAlertSummary = getOptionalOilAlertSummary();
+
   if (!adminDb) {
     // No Firestore configured – full compute (dev / local only).
-    return (await buildComputedDashboardState()).snapshot;
+    return attachOilAlertSummary((await buildComputedDashboardState()).snapshot, pendingOilAlertSummary);
   }
 
   try {
@@ -412,7 +537,9 @@ export async function getDashboardSnapshot(): Promise<DashboardSnapshot> {
       new Promise<typeof dashboardReadTimedOut>((resolve) => setTimeout(() => resolve(dashboardReadTimedOut), dashboardReadTimeoutMs)),
     ]);
 
-    if (snapshot && snapshot !== dashboardReadTimedOut) return snapshot;
+      if (snapshot && snapshot !== dashboardReadTimedOut) {
+        return attachOilAlertSummary(snapshot, pendingOilAlertSummary);
+      }
 
     if (snapshot === null) {
       // 2. Firestore is truly empty – compute a small first-load snapshot so the
@@ -429,7 +556,7 @@ export async function getDashboardSnapshot(): Promise<DashboardSnapshot> {
         },
       }).catch(() => undefined);
 
-      return quickSnapshot;
+      return attachOilAlertSummary(quickSnapshot, pendingOilAlertSummary);
     }
 
     await writeSystemLog({
@@ -441,7 +568,7 @@ export async function getDashboardSnapshot(): Promise<DashboardSnapshot> {
       },
     }).catch(() => undefined);
 
-    return prependDashboardStatus(await buildEmergencyFullSnapshot(), {
+    return attachOilAlertSummary(prependDashboardStatus(await buildEmergencyFullSnapshot(), {
       id: "dashboard-read-timeout",
       label: "Stored snapshot delayed",
       value: "Showing fallback snapshot",
@@ -450,7 +577,7 @@ export async function getDashboardSnapshot(): Promise<DashboardSnapshot> {
       category: "job",
       source: "system",
       updatedAt: new Date().toISOString(),
-    });
+    }), pendingOilAlertSummary);
   } catch (error) {
     await writeSystemLog({
       level: "error",
@@ -462,7 +589,7 @@ export async function getDashboardSnapshot(): Promise<DashboardSnapshot> {
       },
     }).catch(() => undefined);
 
-    return prependDashboardStatus(await buildEmergencyFullSnapshot(), {
+    return attachOilAlertSummary(prependDashboardStatus(await buildEmergencyFullSnapshot(), {
       id: "system-error",
       label: "Temporary data issue",
       value: "Showing fallback snapshot",
@@ -471,7 +598,7 @@ export async function getDashboardSnapshot(): Promise<DashboardSnapshot> {
       category: "job",
       source: "system",
       updatedAt: new Date().toISOString(),
-    });
+    }), pendingOilAlertSummary);
   }
 }
 

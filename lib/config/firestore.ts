@@ -5,6 +5,8 @@ export const firestoreCollections = {
   analysisHistory: "analysisHistory",
   rawMarketData: "rawMarketData",
   systemLogs: "systemLogs",
+  alertState: "alertState",
+  alertHistory: "alertHistory",
 } as const;
 
 export const firestoreAnalysisConfig = {

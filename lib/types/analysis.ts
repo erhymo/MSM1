@@ -1,3 +1,5 @@
+import type { OilAlertDecision, OilAlertDirection, OilAlertHeadlineSignal, OilAlertMarketSignal, OilAlertRunResult } from "@/lib/alerts/oil-alert-types";
+
 export type SignalType =
   | "STRONG_BUY"
   | "BUY"
@@ -201,7 +203,29 @@ export interface SystemStatusItem {
   freshnessMode?: DataFreshness["mode"];
 }
 
+export type OilAlertDashboardDecision = OilAlertDecision | "not-seeded";
+
+export interface OilAlertDashboardSummary {
+  alertId: string;
+  enabled: boolean;
+  decision: OilAlertDashboardDecision;
+  reason: string;
+  confidence: number;
+  direction: OilAlertDirection | null;
+  lastObservedAt?: string;
+  lastRunAt?: string;
+  lastSentAt?: string;
+  cooldownUntil?: string;
+  emailSent: boolean;
+  liveInputs: boolean;
+  newsScore: number;
+  price?: OilAlertRunResult["price"];
+  topSignals: OilAlertMarketSignal[];
+  topHeadlines: OilAlertHeadlineSignal[];
+}
+
 export interface DashboardSnapshot {
   analyses: AnalysisResult[];
   statusItems: SystemStatusItem[];
+  oilAlert?: OilAlertDashboardSummary | null;
 }

@@ -5,18 +5,20 @@ import { useMemo, useState } from "react";
 
 import { InstrumentDetailModal } from "@/components/dashboard/instrument-detail-modal";
 import { InstrumentGrid } from "@/components/dashboard/instrument-grid";
+import { OilAlertSection } from "@/components/dashboard/oil-alert-section";
 import { SystemStatus } from "@/components/dashboard/system-status";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/hooks/use-auth";
-import type { AnalysisResult, SystemStatusItem } from "@/lib/types/analysis";
+import type { AnalysisResult, OilAlertDashboardSummary, SystemStatusItem } from "@/lib/types/analysis";
 import { compareAnalysisResults } from "@/lib/utils/format";
 
 type DashboardShellProps = {
   analyses: AnalysisResult[];
   statusItems: SystemStatusItem[];
+  oilAlert?: OilAlertDashboardSummary | null;
 };
 
-export function DashboardShell({ analyses, statusItems }: DashboardShellProps) {
+export function DashboardShell({ analyses, statusItems, oilAlert }: DashboardShellProps) {
   const [selected, setSelected] = useState<AnalysisResult | null>(null);
   const { user, signOut, loading, initializing } = useAuth();
   const rankedAnalyses = useMemo(() => [...analyses].sort(compareAnalysisResults), [analyses]);
@@ -108,7 +110,8 @@ export function DashboardShell({ analyses, statusItems }: DashboardShellProps) {
             <InstrumentGrid analyses={rankedAnalyses} onSelect={setSelected} />
           </section>
 
-          <aside>
+          <aside className="space-y-6">
+            <OilAlertSection oilAlert={oilAlert} />
             <SystemStatus items={statusItems} />
           </aside>
         </div>
