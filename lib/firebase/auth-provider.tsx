@@ -78,6 +78,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       await ensureAuthPersistence();
       await signInWithEmailAndPassword(auth, email, password);
       await setSessionCookie();
+
+      if (typeof window !== "undefined") {
+        window.location.assign("/dashboard");
+        return;
+      }
+
       router.replace("/dashboard");
     } catch (error) {
       throw new Error(getFirebaseAuthErrorMessage(error));
