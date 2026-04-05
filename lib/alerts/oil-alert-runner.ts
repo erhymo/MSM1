@@ -383,22 +383,6 @@ export async function runOilAlertCheck(trigger: OilAlertRunTrigger, options: Oil
   const observedMarkets = getObservedMarkets(marketSignals);
 
   if (!previousState) {
-    const seededState: FirestoreOilAlertStateDocument = {
-      alertId: oilAlertConfig.alertId,
-      lastObservedAt: startedAt,
-      lastLivePrice: priceSnapshot.currentPrice,
-      lastPriceUpdatedAt: priceSnapshot.updatedAt,
-      lastPriceSource: priceSnapshot.source,
-      lastPolymarketMarkets: observedMarkets,
-      lastDecision: "seeded",
-      lastConfidence: 0,
-      updatedAt: startedAt,
-    };
-
-    if (!dryRun) {
-      await writeOilAlertState(oilAlertConfig.alertId, seededState);
-    }
-
     const result = buildResult({
       ...baseResult,
       status: "ok",
@@ -408,7 +392,21 @@ export async function runOilAlertCheck(trigger: OilAlertRunTrigger, options: Oil
       confidence: 0,
     });
 
+    const seededState: FirestoreOilAlertStateDocument = {
+      alertId: oilAlertConfig.alertId,
+      lastObservedAt: startedAt,
+      lastLivePrice: priceSnapshot.currentPrice,
+      lastPriceUpdatedAt: priceSnapshot.updatedAt,
+      lastPriceSource: priceSnapshot.source,
+      lastPolymarketMarkets: observedMarkets,
+      lastDecision: "seeded",
+      lastConfidence: 0,
+      lastRunResult: result,
+      updatedAt: startedAt,
+    };
+
     if (!dryRun) {
+      await writeOilAlertState(oilAlertConfig.alertId, seededState);
       await appendOilAlertHistory(result).catch(() => undefined);
     }
     return result;
@@ -472,26 +470,6 @@ export async function runOilAlertCheck(trigger: OilAlertRunTrigger, options: Oil
     }
   }
 
-  const nextState: FirestoreOilAlertStateDocument = {
-    alertId: oilAlertConfig.alertId,
-    lastObservedAt: startedAt,
-    lastLivePrice: priceSnapshot.currentPrice,
-    lastPriceUpdatedAt: priceSnapshot.updatedAt,
-    lastPriceSource: priceSnapshot.source,
-    lastPolymarketMarkets: observedMarkets,
-    lastDecision: decision,
-    lastConfidence: confidence,
-    ...(priceDirection ? { lastDirection: priceDirection } : {}),
-    ...(previousState.lastSentAt ? { lastSentAt: previousState.lastSentAt } : {}),
-    ...(previousState.lastSignalHash ? { lastSignalHash: previousState.lastSignalHash } : {}),
-    ...(cooldownUntil ? { cooldownUntil } : {}),
-    updatedAt: startedAt,
-  };
-
-  if (!dryRun) {
-    await writeOilAlertState(oilAlertConfig.alertId, nextState);
-  }
-
   const result = buildResult({
     ...baseResult,
     status,
@@ -502,7 +480,25 @@ export async function runOilAlertCheck(trigger: OilAlertRunTrigger, options: Oil
     ...(emailSubject ? { emailSubject } : {}),
   });
 
+  const nextState: FirestoreOilAlertStateDocument = {
+    alertId: oilAlertConfig.alertId,
+    lastObservedAt: startedAt,
+    lastLivePrice: priceSnapshot.currentPrice,
+    lastPriceUpdatedAt: priceSnapshot.updatedAt,
+    lastPriceSource: priceSnapshot.source,
+    lastPolymarketMarkets: observedMarkets,
+    lastDecision: decision,
+    lastConfidence: confidence,
+    lastRunResult: result,
+    ...(priceDirection ? { lastDirection: priceDirection } : {}),
+    ...(previousState.lastSentAt ? { lastSentAt: previousState.lastSentAt } : {}),
+    ...(previousState.lastSignalHash ? { lastSignalHash: previousState.lastSignalHash } : {}),
+    ...(cooldownUntil ? { cooldownUntil } : {}),
+    updatedAt: startedAt,
+  };
+
   if (!dryRun) {
+    await writeOilAlertState(oilAlertConfig.alertId, nextState);
     await appendOilAlertHistory(result).catch(() => undefined);
   }
 

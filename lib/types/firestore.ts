@@ -1,5 +1,5 @@
 import type { AnalysisResult, AssetClass, DataFreshness, FactorContribution, Instrument, SignalType, SystemStatusItem, TradeSetupQuality } from "@/lib/types/analysis";
-import type { OilAlertDecision, OilAlertDirection, OilAlertRunTrigger } from "@/lib/alerts/oil-alert-types";
+import type { OilAlertDecision, OilAlertDirection, OilAlertRunResult, OilAlertRunTrigger } from "@/lib/alerts/oil-alert-types";
 
 export interface FirestoreInstrumentDocument {
   ticker: string;
@@ -116,6 +116,7 @@ export interface FirestoreOilAlertStateDocument {
   lastDirection?: OilAlertDirection;
   lastSentAt?: string;
   lastSignalHash?: string;
+  lastRunResult?: OilAlertRunResult;
   cooldownUntil?: string;
   updatedAt: string;
 }

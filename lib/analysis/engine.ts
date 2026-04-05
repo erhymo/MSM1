@@ -7,7 +7,7 @@ import { computeAnalysis } from "@/lib/analysis/scoring";
 import { instruments } from "@/lib/config/instruments";
 import { oilAlertConfig } from "@/lib/config/oil-alerts";
 import { adminDb } from "@/lib/firebase/admin";
-import { getLatestOilAlertHistory, getOilAlertState } from "@/lib/firebase/firestore-alert-service";
+import { getOilAlertState } from "@/lib/firebase/firestore-alert-service";
 import { getDashboardSnapshotFromFirestore } from "@/lib/firebase/firestore-analysis-service";
 import { writeSystemLog } from "@/lib/firebase/firestore-system-log-service";
 import { cotProviderConfig } from "@/lib/providers/cot/config";
@@ -21,7 +21,7 @@ import { priceProvider } from "@/lib/providers/price/provider";
 import { sentimentProviderConfig } from "@/lib/providers/sentiment/config";
 import { sentimentProvider } from "@/lib/providers/sentiment/provider";
 import type { AnalysisResult, COTSnapshot, DashboardSnapshot, Instrument, OilAlertDashboardDecision, OilAlertDashboardSummary, PriceSnapshot, SentimentSnapshot, SystemStatusItem, VolatilitySnapshot } from "@/lib/types/analysis";
-import type { FirestoreOilAlertHistoryDocument, FirestoreOilAlertStateDocument, FirestoreRawMarketDataDocument } from "@/lib/types/firestore";
+import type { FirestoreOilAlertStateDocument, FirestoreRawMarketDataDocument } from "@/lib/types/firestore";
 import { compareAnalysisResults, formatRelativeTime } from "@/lib/utils/format";
 
 export type ComputedDashboardState = {
@@ -430,20 +430,20 @@ function getOilAlertReason(decision: OilAlertDashboardDecision) {
 
 function buildOilAlertSummary(
   state: FirestoreOilAlertStateDocument | null,
-  history: FirestoreOilAlertHistoryDocument | null,
 ): OilAlertDashboardSummary {
-  if (history) {
+  if (state?.lastRunResult) {
+    const history = state.lastRunResult;
     return {
-      alertId: history.alertId,
+      alertId: history.alertId ?? state.alertId,
       enabled: oilAlertConfig.enabled,
       decision: history.decision,
       reason: history.reason,
       confidence: history.confidence,
       direction: history.direction,
-      lastObservedAt: state?.lastObservedAt ?? history.completedAt,
+      lastObservedAt: state.lastObservedAt ?? history.completedAt,
       lastRunAt: history.completedAt,
-      lastSentAt: state?.lastSentAt,
-      cooldownUntil: history.cooldownUntil ?? state?.cooldownUntil,
+      lastSentAt: state.lastSentAt,
+      cooldownUntil: history.cooldownUntil ?? state.cooldownUntil,
       emailSent: history.emailSent,
       liveInputs: history.liveInputs,
       newsScore: history.newsScore,
@@ -506,15 +506,12 @@ async function getOptionalOilAlertSummary(): Promise<OilAlertDashboardSummary | 
   return Promise.race([
     (async () => {
       if (!adminDb) {
-        return oilAlertConfig.enabled ? null : buildOilAlertSummary(null, null);
+        return oilAlertConfig.enabled ? null : buildOilAlertSummary(null);
       }
 
-      const [state, history] = await Promise.all([
-        getOilAlertState(oilAlertConfig.alertId).catch(() => null),
-        getLatestOilAlertHistory(oilAlertConfig.alertId).catch(() => null),
-      ]);
+      const state = await getOilAlertState(oilAlertConfig.alertId).catch(() => null);
 
-      return buildOilAlertSummary(state, history);
+      return buildOilAlertSummary(state);
     })().catch(() => null),
     new Promise<null>((resolve) => setTimeout(() => resolve(null), oilAlertReadTimeoutMs)),
   ]);
