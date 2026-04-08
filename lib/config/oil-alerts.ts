@@ -50,7 +50,7 @@ export const oilAlertConfig = {
   minPriceMovePercent: toNumber(process.env.OIL_ALERT_MIN_PRICE_MOVE_PERCENT, 0.9, 0.1),
   minPolymarketMovePp: toNumber(process.env.OIL_ALERT_MIN_POLYMARKET_MOVE_PP, 3, 0.1),
   maxPriceAgeHours: toNumber(process.env.OIL_ALERT_MAX_PRICE_AGE_HOURS, 30, 1),
-  maxPolymarketAgeHours: toNumber(process.env.OIL_ALERT_MAX_POLYMARKET_AGE_HOURS, 12, 1),
+  maxPolymarketAgeHours: toNumber(process.env.OIL_ALERT_MAX_POLYMARKET_AGE_HOURS, 72, 72),
   minFreshPolymarketMarkets: Math.min(configuredMarkets.length, Math.floor(toNumber(process.env.OIL_ALERT_MIN_FRESH_POLYMARKET_MARKETS, 2, 1))),
   headlinesEnabled: toBoolean(process.env.OIL_ALERT_HEADLINES_ENABLED, true),
   maxHeadlineAgeHours: toNumber(process.env.OIL_ALERT_MAX_HEADLINE_AGE_HOURS, 24, 1),

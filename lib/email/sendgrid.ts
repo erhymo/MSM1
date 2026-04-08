@@ -25,6 +25,11 @@ function getSendGridConfig() {
   };
 }
 
+export function isOilAlertEmailConfigured() {
+  const config = getSendGridConfig();
+  return Boolean(config.apiKey && config.fromEmail && config.recipients.length);
+}
+
 export async function sendOilAlertEmail(input: SendGridEmailInput) {
   const config = getSendGridConfig();
 

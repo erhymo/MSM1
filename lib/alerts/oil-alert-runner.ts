@@ -6,7 +6,7 @@ import { adminDb } from "@/lib/firebase/admin";
 import { appendOilAlertHistory, getOilAlertState, writeOilAlertState } from "@/lib/firebase/firestore-alert-service";
 import { writeSystemLog } from "@/lib/firebase/firestore-system-log-service";
 import { instruments } from "@/lib/config/instruments";
-import { sendOilAlertEmail } from "@/lib/email/sendgrid";
+import { isOilAlertEmailConfigured, sendOilAlertEmail } from "@/lib/email/sendgrid";
 import { gdeltNewsProvider } from "@/lib/providers/news/gdelt-provider";
 import { polymarketProvider } from "@/lib/providers/polymarket/provider";
 import { priceProvider } from "@/lib/providers/price/provider";
@@ -150,6 +150,31 @@ function buildResult(
   };
 }
 
+function toRunState(
+  result: OilAlertRunResult,
+  startedAt: string,
+  priceSnapshot: ReturnType<typeof priceProvider.getSnapshot> extends Promise<infer T> ? T : never,
+  previousState: FirestoreOilAlertStateDocument | null,
+  observedMarkets: FirestoreOilAlertObservedMarketDocument[],
+): FirestoreOilAlertStateDocument {
+  return {
+    alertId: oilAlertConfig.alertId,
+    lastObservedAt: startedAt,
+    lastLivePrice: priceSnapshot.currentPrice,
+    lastPriceUpdatedAt: priceSnapshot.updatedAt,
+    lastPriceSource: priceSnapshot.source,
+    lastPolymarketMarkets: observedMarkets.length ? observedMarkets : (previousState?.lastPolymarketMarkets ?? []),
+    lastDecision: result.decision,
+    lastConfidence: result.confidence,
+    lastRunResult: result,
+    ...(result.direction ? { lastDirection: result.direction } : {}),
+    ...(previousState?.lastSentAt ? { lastSentAt: previousState.lastSentAt } : {}),
+    ...(previousState?.lastSignalHash ? { lastSignalHash: previousState.lastSignalHash } : {}),
+    ...(result.cooldownUntil ?? previousState?.cooldownUntil ? { cooldownUntil: result.cooldownUntil ?? previousState?.cooldownUntil } : {}),
+    updatedAt: startedAt,
+  };
+}
+
 function ensurePersistenceAvailable() {
   if (!adminDb) {
     throw new Error("Firebase Admin / Firestore is not configured. Oil alerts require alert state/history persistence.");
@@ -249,6 +274,7 @@ export async function runOilAlertCheck(trigger: OilAlertRunTrigger, options: Oil
   const freshMarketSnapshots = marketSnapshots.filter((snapshot) => isActiveFreshMarket(snapshot, startedAt));
   const staleOrInactiveMarkets = marketSnapshots.filter((snapshot) => !isActiveFreshMarket(snapshot, startedAt));
   const freshHeadlines = rawHeadlines.filter((headline) => isFreshEnough(headline.publishedAt, oilAlertConfig.maxHeadlineAgeHours, startedAt));
+  const observedMarketBaseline = previousState?.lastPolymarketMarkets ?? [];
 
   const priceMovePercent = previousState ? getPercentChange(priceSnapshot.currentPrice, previousState.lastLivePrice) : 0;
 
@@ -346,6 +372,7 @@ export async function runOilAlertCheck(trigger: OilAlertRunTrigger, options: Oil
     });
 
     if (!dryRun) {
+      await writeOilAlertState(oilAlertConfig.alertId, toRunState(result, startedAt, priceSnapshot, previousState, observedMarketBaseline));
       await appendOilAlertHistory(result).catch(() => undefined);
     }
     return result;
@@ -360,6 +387,7 @@ export async function runOilAlertCheck(trigger: OilAlertRunTrigger, options: Oil
     });
 
     if (!dryRun) {
+      await writeOilAlertState(oilAlertConfig.alertId, toRunState(result, startedAt, priceSnapshot, previousState, observedMarketBaseline));
       await appendOilAlertHistory(result).catch(() => undefined);
     }
     return result;
@@ -375,6 +403,7 @@ export async function runOilAlertCheck(trigger: OilAlertRunTrigger, options: Oil
     });
 
     if (!dryRun) {
+      await writeOilAlertState(oilAlertConfig.alertId, toRunState(result, startedAt, priceSnapshot, previousState, observedMarketBaseline));
       await appendOilAlertHistory(result).catch(() => undefined);
     }
     return result;
@@ -449,17 +478,39 @@ export async function runOilAlertCheck(trigger: OilAlertRunTrigger, options: Oil
       emailSubject = `MSM1 Oil Alert: ${priceDirection === "bullish" ? "Bullish" : "Bearish"} Brent signal (${confidence}/100)`;
       const emailBody = buildEmailBody(priceDirection, confidence, priceSnapshot.currentPrice, priceMovePercent, topSignals, topHeadlines);
       if (!dryRun) {
-        await sendOilAlertEmail({
-          subject: emailSubject,
-          html: emailBody.html,
-          text: emailBody.text,
-          categories: ["msm1", "oil-alert"],
-        });
+        if (isOilAlertEmailConfigured()) {
+          try {
+            await sendOilAlertEmail({
+              subject: emailSubject,
+              html: emailBody.html,
+              text: emailBody.text,
+              categories: ["msm1", "oil-alert"],
+            });
 
-        emailSent = true;
+            emailSent = true;
+          } catch (error) {
+            await writeSystemLog({
+              level: "warning",
+              scope: "oil-alert",
+              message: "Oil alert triggered but email delivery failed",
+              details: {
+                reason: error instanceof Error ? error.message : "unknown-error",
+              },
+            }).catch(() => undefined);
+          }
+        } else {
+          await writeSystemLog({
+            level: "info",
+            scope: "oil-alert",
+            message: "Oil alert triggered with email delivery disabled",
+            details: {
+              reason: "SendGrid env vars are not configured",
+            },
+          }).catch(() => undefined);
+        }
       }
       cooldownUntil = new Date(now + oilAlertConfig.cooldownHours * 60 * 60 * 1000).toISOString();
-      reason = `${dryRun ? "Dry-run would trigger" : "Triggered"} ${priceDirection} oil alert with confidence ${confidence}`;
+      reason = `${dryRun ? "Dry-run would trigger" : "Triggered"} ${priceDirection} oil alert with confidence ${confidence}${!dryRun && !emailSent ? " (email delivery disabled)" : ""}`;
 
       if (!dryRun) {
         previousState.lastSentAt = startedAt;
@@ -480,22 +531,7 @@ export async function runOilAlertCheck(trigger: OilAlertRunTrigger, options: Oil
     ...(emailSubject ? { emailSubject } : {}),
   });
 
-  const nextState: FirestoreOilAlertStateDocument = {
-    alertId: oilAlertConfig.alertId,
-    lastObservedAt: startedAt,
-    lastLivePrice: priceSnapshot.currentPrice,
-    lastPriceUpdatedAt: priceSnapshot.updatedAt,
-    lastPriceSource: priceSnapshot.source,
-    lastPolymarketMarkets: observedMarkets,
-    lastDecision: decision,
-    lastConfidence: confidence,
-    lastRunResult: result,
-    ...(priceDirection ? { lastDirection: priceDirection } : {}),
-    ...(previousState.lastSentAt ? { lastSentAt: previousState.lastSentAt } : {}),
-    ...(previousState.lastSignalHash ? { lastSignalHash: previousState.lastSignalHash } : {}),
-    ...(cooldownUntil ? { cooldownUntil } : {}),
-    updatedAt: startedAt,
-  };
+  const nextState = toRunState(result, startedAt, priceSnapshot, previousState, observedMarkets);
 
   if (!dryRun) {
     await writeOilAlertState(oilAlertConfig.alertId, nextState);
