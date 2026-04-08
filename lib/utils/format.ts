@@ -20,11 +20,11 @@ export const SIGNAL_LABELS: Record<SignalType, string> = {
 const SIGNAL_SORT_PRIORITY: Record<SignalType, number> = {
   STRONG_BUY: 0,
   BUY: 1,
-  HOLD: 2,
-  WAIT: 3,
-  NO_TRADE: 4,
-  SELL: 5,
-  STRONG_SELL: 6,
+  STRONG_SELL: 2,
+  SELL: 3,
+  HOLD: 4,
+  WAIT: 5,
+  NO_TRADE: 6,
 };
 
 export function formatPercent(value: number, digits = 0) {
