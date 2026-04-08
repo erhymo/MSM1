@@ -7,6 +7,8 @@ export const firestoreCollections = {
   systemLogs: "systemLogs",
   alertState: "alertState",
   alertHistory: "alertHistory",
+  recommendationAudits: "recommendationAudits",
+  modelReviewReports: "modelReviewReports",
 } as const;
 
 export const firestoreAnalysisConfig = {

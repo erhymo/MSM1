@@ -1,8 +1,10 @@
 import "server-only";
 
+import { modelReviewConfig } from "@/lib/config/model-review";
 import { firestoreAnalysisConfig, firestoreCollections } from "@/lib/config/firestore";
 import { adminDb } from "@/lib/firebase/admin";
 import { storeRawMarketData } from "@/lib/firebase/firestore-raw-market-service";
+import { buildRecommendationAuditId } from "@/lib/firebase/firestore-model-review-service";
 import { writeSystemLog } from "@/lib/firebase/firestore-system-log-service";
 import type { AnalysisResult, DashboardSnapshot, HistoryPoint, SignalHistoryPoint } from "@/lib/types/analysis";
 import type {
@@ -11,6 +13,7 @@ import type {
   FirestoreDashboardSnapshotDocument,
   FirestoreInstrumentDocument,
   FirestoreLatestAnalysisDocument,
+  FirestoreRecommendationAuditDocument,
   FirestoreRawMarketDataDocument,
 } from "@/lib/types/firestore";
 import { compareAnalysisResults, formatRelativeTime } from "@/lib/utils/format";
@@ -92,6 +95,41 @@ function toInstrumentDocument(analysis: AnalysisResult, writtenAt: string): Fire
     assetClass: analysis.instrument.assetClass,
     active: true,
     updatedAt: writtenAt,
+  };
+}
+
+function toRecommendationAuditDocument(
+  analysis: AnalysisResult,
+  trigger: "cron" | "manual",
+  writtenAt: string,
+): FirestoreRecommendationAuditDocument {
+  return {
+    auditId: buildRecommendationAuditId(analysis.instrument.ticker, writtenAt),
+    ticker: analysis.instrument.ticker,
+    instrument: analysis.instrument,
+    trigger,
+    createdAt: writtenAt,
+    analysisUpdatedAt: analysis.updatedAt,
+    freshnessMode: analysis.freshness.mode,
+    signal: analysis.signal,
+    score: analysis.score,
+    confidence: analysis.confidence,
+    setupQuality: analysis.setupQuality,
+    marketRegime: analysis.marketRegime,
+    entry: analysis.entry,
+    stopLoss: analysis.stopLoss,
+    target: analysis.target,
+    riskReward: analysis.riskReward,
+    aiSummary: analysis.aiSummary,
+    explanation: analysis.explanation,
+    factorContributions: analysis.factorContributions,
+    outcomes: modelReviewConfig.outcomeWindowsHours.map((horizonHours) => ({
+      horizonHours,
+      targetTime: new Date(new Date(writtenAt).getTime() + horizonHours * 60 * 60 * 1000).toISOString(),
+      status: "pending",
+      observationCount: 0,
+    })),
+    evaluationStatus: "pending",
   };
 }
 
@@ -289,7 +327,11 @@ async function getDashboardSnapshotFromLatestAnalysisCollection(): Promise<Dashb
   ]);
 }
 
-export async function seedFirestoreAnalysisStore(snapshot: DashboardSnapshot, rawMarketData: FirestoreRawMarketDataDocument[]) {
+export async function seedFirestoreAnalysisStore(
+  snapshot: DashboardSnapshot,
+  rawMarketData: FirestoreRawMarketDataDocument[],
+  options: { trigger: "cron" | "manual" },
+) {
   const db = adminDb;
   if (!db) return;
 
@@ -323,9 +365,12 @@ export async function seedFirestoreAnalysisStore(snapshot: DashboardSnapshot, ra
   for (const analysis of snapshot.analyses) {
     const instrumentRef = firestore.collection(firestoreCollections.instruments).doc(analysis.instrument.ticker);
     const latestRef = firestore.collection(firestoreCollections.latestAnalysis).doc(analysis.instrument.ticker);
+    const audit = toRecommendationAuditDocument(analysis, options.trigger, writtenAt);
+    const auditRef = firestore.collection(firestoreCollections.recommendationAudits).doc(audit.auditId);
 
     await queueSet(instrumentRef, toInstrumentDocument(analysis, writtenAt));
     await queueSet(latestRef, toLatestAnalysisDocument(analysis, writtenAt));
+    await queueSet(auditRef, audit);
 
     for (const entry of toHistoryDocuments(analysis)) {
       const historyRef = firestore

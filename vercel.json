@@ -8,6 +8,14 @@
     {
       "path": "/api/cron/alerts/oil",
       "schedule": "5,20,35,50 * * * *"
+    },
+    {
+      "path": "/api/cron/model-review/outcomes",
+      "schedule": "40 2 * * *"
+    },
+    {
+      "path": "/api/cron/model-review/report",
+      "schedule": "55 2 * * 1"
     }
   ]
 }

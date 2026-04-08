@@ -57,6 +57,73 @@ export interface FirestoreAnalysisHistoryDocument {
   cotValue?: number;
 }
 
+export interface FirestoreRecommendationAuditOutcome {
+  horizonHours: number;
+  targetTime: string;
+  status: "pending" | "ready";
+  evaluatedAt?: string;
+  observedPrice?: number;
+  observedAt?: string;
+  observationCount: number;
+  returnPercent?: number;
+  maxFavorablePercent?: number;
+  maxAdversePercent?: number;
+  targetHit?: boolean;
+  stopHit?: boolean;
+  directionalWin?: boolean;
+}
+
+export interface FirestoreRecommendationAuditDocument {
+  auditId: string;
+  ticker: string;
+  instrument: Instrument;
+  trigger: "cron" | "manual";
+  createdAt: string;
+  analysisUpdatedAt: string;
+  freshnessMode: DataFreshness["mode"];
+  signal: SignalType;
+  score: number;
+  confidence: number;
+  setupQuality: TradeSetupQuality;
+  marketRegime: AnalysisResult["marketRegime"];
+  entry: number;
+  stopLoss: number;
+  target: number;
+  riskReward: number;
+  aiSummary: string;
+  explanation: string;
+  factorContributions: FactorContribution[];
+  outcomes: FirestoreRecommendationAuditOutcome[];
+  evaluationStatus: "pending" | "partial" | "complete";
+}
+
+export interface FirestoreModelReviewMetricRow {
+  label: string;
+  samples: number;
+  avgReturnPercent: number;
+  hitRatePercent: number;
+  avgConfidence: number;
+}
+
+export interface FirestoreModelReviewReportDocument {
+  reportId: string;
+  generatedAt: string;
+  horizonHours: number;
+  sourceAuditCount: number;
+  completeAuditCount: number;
+  reviewMode: "template" | "openai";
+  headline: string;
+  summary: string;
+  recommendations: string[];
+  metrics: {
+    total: FirestoreModelReviewMetricRow;
+    bySignal: FirestoreModelReviewMetricRow[];
+    byConfidenceBucket: FirestoreModelReviewMetricRow[];
+    byRegime: FirestoreModelReviewMetricRow[];
+    byFreshnessMode: FirestoreModelReviewMetricRow[];
+  };
+}
+
 export type RawMarketDataCategory = "price" | "cot" | "sentiment" | "volatility";
 
 export type FirestoreRawMarketValue =
@@ -90,7 +157,8 @@ export interface FirestoreSystemLogDocument {
     | "polymarket-provider"
     | "email"
     | "news-provider"
-    | "oil-alert";
+    | "oil-alert"
+    | "model-review";
   message: string;
   details?: Record<string, string | number | boolean | null>;
   createdAt: string;

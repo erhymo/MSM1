@@ -68,7 +68,7 @@ export async function runAnalysisRefresh(trigger: AnalysisRunTrigger): Promise<A
   try {
     const computedState = await buildComputedDashboardState();
 
-    await seedFirestoreAnalysisStore(computedState.snapshot, computedState.rawMarketData);
+    await seedFirestoreAnalysisStore(computedState.snapshot, computedState.rawMarketData, { trigger });
 
     const completedAt = new Date().toISOString();
     const fallbackInstruments = computedState.snapshot.analyses.filter((analysis) => analysis.freshness.mode === "fallback").length;
