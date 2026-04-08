@@ -15,7 +15,7 @@
     },
     {
       "path": "/api/cron/model-review/report",
-      "schedule": "55 2 * * 1"
+      "schedule": "55 2 * * 0"
     }
   ]
 }

@@ -1,6 +1,7 @@
 "use client";
 
-import { Activity, BellDot, LogOut, ShieldCheck } from "lucide-react";
+import { Activity, BellDot, FileText, LogOut, ShieldCheck } from "lucide-react";
+import Link from "next/link";
 import { useMemo, useState } from "react";
 
 import { InstrumentDetailModal } from "@/components/dashboard/instrument-detail-modal";
@@ -82,15 +83,24 @@ export function DashboardShell({ analyses, statusItems, oilAlert }: DashboardShe
                 <BellDot className="h-4 w-4 text-blue-300" />
                 {initializing ? "Syncing authenticated session" : "Scheduled runner and provider fallback active"}
               </div>
-              <button
-                type="button"
-                onClick={() => void signOut()}
-                disabled={loading || initializing}
-                className="inline-flex items-center gap-2 rounded-2xl border border-white/10 px-4 py-2 text-sm text-slate-200 transition hover:bg-white/5 disabled:opacity-60"
-              >
-                <LogOut className="h-4 w-4" />
-                Sign out
-              </button>
+              <div className="flex flex-wrap items-center gap-3">
+                <Link
+                  href="/reports"
+                  className="inline-flex items-center gap-2 rounded-2xl border border-cyan-400/20 bg-cyan-400/10 px-4 py-2 text-sm text-cyan-100 transition hover:bg-cyan-400/15"
+                >
+                  <FileText className="h-4 w-4" />
+                  Rapport
+                </Link>
+                <button
+                  type="button"
+                  onClick={() => void signOut()}
+                  disabled={loading || initializing}
+                  className="inline-flex items-center gap-2 rounded-2xl border border-white/10 px-4 py-2 text-sm text-slate-200 transition hover:bg-white/5 disabled:opacity-60"
+                >
+                  <LogOut className="h-4 w-4" />
+                  Sign out
+                </button>
+              </div>
             </div>
           </div>
         </header>

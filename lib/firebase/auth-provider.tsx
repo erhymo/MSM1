@@ -62,7 +62,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    if (!user && pathname.startsWith("/dashboard")) {
+    if (!user && (pathname.startsWith("/dashboard") || pathname.startsWith("/reports"))) {
       router.replace("/login");
     }
   }, [initializing, pathname, router, user]);

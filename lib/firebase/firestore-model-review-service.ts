@@ -94,3 +94,11 @@ export async function getLatestModelReviewReport() {
   const snapshot = await db.collection(firestoreCollections.modelReviewReports).orderBy("generatedAt", "desc").limit(1).get();
   return snapshot.empty ? null : (snapshot.docs[0]?.data() as FirestoreModelReviewReportDocument);
 }
+
+export async function getRecentModelReviewReports(limit = 12) {
+  const db = adminDb;
+  if (!db) return [];
+
+  const snapshot = await db.collection(firestoreCollections.modelReviewReports).orderBy("generatedAt", "desc").limit(limit).get();
+  return snapshot.docs.map((doc) => doc.data() as FirestoreModelReviewReportDocument);
+}

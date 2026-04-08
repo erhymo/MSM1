@@ -60,10 +60,12 @@ export async function runModelReviewReport(trigger: ModelReviewRunTrigger, dryRu
     completeAuditCount: completeAudits.length,
     metrics,
   });
+  const generatedAt = new Date().toISOString();
+  const reportDate = generatedAt.slice(0, 10);
 
   const report = {
-    reportId: `latest-${modelReviewConfig.reportHorizonHours}h`,
-    generatedAt: new Date().toISOString(),
+    reportId: `model-review-${reportDate}-${modelReviewConfig.reportHorizonHours}h`,
+    generatedAt,
     horizonHours: modelReviewConfig.reportHorizonHours,
     sourceAuditCount: audits.length,
     completeAuditCount: completeAudits.length,
