@@ -12,11 +12,13 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { useEffect, useMemo, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Modal } from "@/components/ui/modal";
 import type { AnalysisResult } from "@/lib/types/analysis";
+import type { AnalysisHistorySeries } from "@/lib/types/firestore";
 import { cn } from "@/lib/utils/cn";
 import { formatApproxNokPrice, formatPercent, formatPrice, formatRelativeTime, SIGNAL_LABELS } from "@/lib/utils/format";
 
@@ -45,10 +47,56 @@ const signalTone: Record<AnalysisResult["signal"], string> = {
 };
 
 export function InstrumentDetailModal({ analysis, open, onClose }: InstrumentDetailModalProps) {
-  if (!analysis) return null;
+  const [remoteHistory, setRemoteHistory] = useState<AnalysisHistorySeries | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
 
-  const hasSentimentHistory = Boolean(analysis.sentimentHistory?.length);
-  const hasCotHistory = Boolean(analysis.cotHistory?.length);
+  useEffect(() => {
+    if (!open || !analysis) return;
+
+    const controller = new AbortController();
+    setHistoryLoading(true);
+    setRemoteHistory(null);
+
+    void fetch(`/api/analysis/history/${analysis.instrument.ticker}?limit=30`, {
+      method: "GET",
+      credentials: "include",
+      cache: "no-store",
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        const payload = (await response.json()) as { ok?: boolean; history?: AnalysisHistorySeries | null };
+        if (!response.ok || !payload.ok) return null;
+        return payload.history ?? null;
+      })
+      .then((history) => {
+        if (!controller.signal.aborted) setRemoteHistory(history);
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (!controller.signal.aborted) setHistoryLoading(false);
+      });
+
+    return () => controller.abort();
+  }, [open, analysis]);
+
+  const history = useMemo<AnalysisHistorySeries | null>(
+    () =>
+      analysis
+        ? remoteHistory ?? {
+            priceHistory: analysis.priceHistory,
+            confidenceHistory: analysis.confidenceHistory,
+            cotHistory: analysis.cotHistory,
+            sentimentHistory: analysis.sentimentHistory,
+            signalHistory: analysis.signalHistory,
+          }
+        : null,
+    [analysis, remoteHistory],
+  );
+
+  if (!analysis || !history) return null;
+
+  const hasSentimentHistory = Boolean(history.sentimentHistory?.length);
+  const hasCotHistory = Boolean(history.cotHistory?.length);
   const freshnessLabel = analysis.freshness.mode === "fallback" ? "Fallback active" : "Live provider data";
   const isNoTrade = analysis.signal === "NO_TRADE";
   const entryNok = formatApproxNokPrice(analysis.entry, analysis);
@@ -152,10 +200,20 @@ export function InstrumentDetailModal({ analysis, open, onClose }: InstrumentDet
           </Card>
         </section>
 
+        <div className="flex flex-wrap items-center gap-3 text-xs text-slate-400">
+          <span>
+            {historyLoading
+              ? "Laster daglig historikk…"
+              : remoteHistory
+                ? "Viser lagret daglig historikk med live punkt"
+                : "Viser siste lagrede punkt mens historikken bygges opp"}
+          </span>
+        </div>
+
         <section className="grid gap-4 xl:grid-cols-2">
           <ChartCard title="Price trend chart">
             <ResponsiveContainer width="100%" height={240}>
-              <AreaChart data={analysis.priceHistory}>
+              <AreaChart data={history.priceHistory}>
                 <CartesianGrid stroke={chartGridColor} strokeDasharray="3 3" />
                 <XAxis dataKey="label" stroke={chartAxisColor} />
                 <YAxis stroke={chartAxisColor} domain={["dataMin - 1", "dataMax + 1"]} />
@@ -167,7 +225,7 @@ export function InstrumentDetailModal({ analysis, open, onClose }: InstrumentDet
 
           <ChartCard title="Confidence history">
             <ResponsiveContainer width="100%" height={240}>
-              <LineChart data={analysis.confidenceHistory}>
+              <LineChart data={history.confidenceHistory}>
                 <CartesianGrid stroke={chartGridColor} strokeDasharray="3 3" />
                 <XAxis dataKey="label" stroke={chartAxisColor} />
                 <YAxis stroke={chartAxisColor} />
@@ -181,7 +239,7 @@ export function InstrumentDetailModal({ analysis, open, onClose }: InstrumentDet
         <section className="grid gap-4 xl:grid-cols-3">
           <ChartCard title="Signal history">
             <ResponsiveContainer width="100%" height={260}>
-              <LineChart data={analysis.signalHistory}>
+              <LineChart data={history.signalHistory}>
                 <CartesianGrid stroke={chartGridColor} strokeDasharray="3 3" />
                 <XAxis dataKey="label" stroke={chartAxisColor} />
                 <YAxis stroke={chartAxisColor} domain={[-100, 100]} />
@@ -194,7 +252,7 @@ export function InstrumentDetailModal({ analysis, open, onClose }: InstrumentDet
           {hasSentimentHistory ? (
             <ChartCard title="Sentiment history">
               <ResponsiveContainer width="100%" height={260}>
-                <LineChart data={analysis.sentimentHistory}>
+                <LineChart data={history.sentimentHistory}>
                   <CartesianGrid stroke={chartGridColor} strokeDasharray="3 3" />
                   <XAxis dataKey="label" stroke={chartAxisColor} />
                   <YAxis stroke={chartAxisColor} />
@@ -208,7 +266,7 @@ export function InstrumentDetailModal({ analysis, open, onClose }: InstrumentDet
           {hasCotHistory ? (
             <ChartCard title="COT history">
               <ResponsiveContainer width="100%" height={260}>
-                <AreaChart data={analysis.cotHistory}>
+                <AreaChart data={history.cotHistory}>
                   <CartesianGrid stroke={chartGridColor} strokeDasharray="3 3" />
                   <XAxis dataKey="label" stroke={chartAxisColor} />
                   <YAxis stroke={chartAxisColor} domain={[-100, 100]} />

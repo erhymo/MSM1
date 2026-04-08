@@ -3,6 +3,7 @@ export const firestoreCollections = {
   latestAnalysis: "latestAnalysis",
   dashboardSnapshots: "dashboardSnapshots",
   analysisHistory: "analysisHistory",
+  analysisDailyHistory: "analysisDailyHistory",
   rawMarketData: "rawMarketData",
   systemLogs: "systemLogs",
   alertState: "alertState",

@@ -14,6 +14,10 @@
       "schedule": "40 2 * * *"
     },
     {
+      "path": "/api/cron/analysis/history",
+      "schedule": "20 0 * * *"
+    },
+    {
       "path": "/api/cron/model-review/report",
       "schedule": "55 2 * * 0"
     }

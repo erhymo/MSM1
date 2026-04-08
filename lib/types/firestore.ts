@@ -57,6 +57,19 @@ export interface FirestoreAnalysisHistoryDocument {
   cotValue?: number;
 }
 
+export interface FirestoreAnalysisDailyHistoryDocument {
+  ticker: string;
+  recordedDate: string;
+  recordedAt: string;
+  source: string;
+  freshnessMode: DataFreshness["mode"];
+  price: number;
+  confidence: number;
+  score: number;
+  signal: SignalType;
+  retailLong: number;
+}
+
 export interface FirestoreRecommendationAuditOutcome {
   horizonHours: number;
   targetTime: string;
