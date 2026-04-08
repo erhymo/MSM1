@@ -42,6 +42,46 @@ function getStatusLabel(oilAlert?: OilAlertDashboardSummary | null) {
   return "Monitoring";
 }
 
+function getActionLabel(oilAlert?: OilAlertDashboardSummary | null) {
+  if (!oilAlert?.enabled) return "WAIT";
+  if (oilAlert.decision === "triggered" && oilAlert.direction === "bullish") return "BUY OIL";
+  if (oilAlert.decision === "triggered" && oilAlert.direction === "bearish") return "SELL OIL";
+  return "WAIT";
+}
+
+function getActionTone(oilAlert?: OilAlertDashboardSummary | null) {
+  const action = getActionLabel(oilAlert);
+  if (action === "BUY OIL") return "text-emerald-300";
+  if (action === "SELL OIL") return "text-rose-300";
+  return "text-slate-100";
+}
+
+function getActionSummary(oilAlert?: OilAlertDashboardSummary | null) {
+  if (!oilAlert) return "Oil alert-data kunne ikke lastes akkurat nå.";
+  if (!oilAlert.enabled) return "Oil alert-motoren er pauset.";
+  if (oilAlert.decision === "triggered" && oilAlert.direction === "bullish") return `Bullish oil signal med ${oilAlert.confidence}/100 confidence.`;
+  if (oilAlert.decision === "triggered" && oilAlert.direction === "bearish") return `Bearish oil signal med ${oilAlert.confidence}/100 confidence.`;
+  if (oilAlert.decision === "not-seeded" || oilAlert.decision === "seeded") return "Bygger første baseline før klare olje-signaler kan vises.";
+  if (oilAlert.decision === "skipped-stale-price") return "Venter på ferskere Brent-data før signal kan vurderes.";
+  if (oilAlert.decision === "skipped-stale-polymarket") return "Venter på ferskere Polymarket-bekreftelse før signal kan vurderes.";
+  if (oilAlert.decision === "insufficient-move") return "Brent-bevegelsen er ikke sterk nok ennå.";
+  if (oilAlert.decision === "insufficient-confidence") return "Signalet er ikke sterkt nok ennå.";
+  if (oilAlert.decision === "cooldown") return "Forrige olje-signal er fortsatt i cooldown.";
+  if (oilAlert.decision === "duplicate") return "Samme oljescenario ble allerede registrert nylig.";
+  return "Overvåker for neste klare olje-signal.";
+}
+
+function getActionSubline(oilAlert?: OilAlertDashboardSummary | null) {
+  if (!oilAlert) return "Ingen lastet state.";
+
+  const parts = [`Confidence ${oilAlert.confidence}/100`];
+  if (oilAlert.price) {
+    parts.push(`Brent ${formatPercent(oilAlert.price.movePercent, 1)}`);
+  }
+  parts.push(`Updated ${formatWhen(oilAlert.lastRunAt ?? oilAlert.lastObservedAt)}`);
+  return parts.join(" • ");
+}
+
 function getDirectionLabel(direction: OilAlertDashboardSummary["direction"]) {
   if (direction === "bullish") return "Bullish oil";
   if (direction === "bearish") return "Bearish oil";
@@ -76,6 +116,7 @@ function Metric({ label, value, detail }: { label: string; value: string; detail
 
 export function OilAlertSection({ oilAlert }: { oilAlert?: OilAlertDashboardSummary | null }) {
   const statusLabel = getStatusLabel(oilAlert);
+  const actionLabel = getActionLabel(oilAlert);
 
   return (
     <Card className="p-5">
@@ -93,17 +134,26 @@ export function OilAlertSection({ oilAlert }: { oilAlert?: OilAlertDashboardSumm
         </div>
       ) : (
         <div className="space-y-4">
-          <div className="flex flex-wrap items-center gap-2">
-            <Badge className={cn("border-transparent", getStatusTone(oilAlert))}>{statusLabel}</Badge>
-            <Badge className="bg-white/5 text-slate-200">{decisionLabels[oilAlert.decision]}</Badge>
-            {oilAlert.liveInputs ? <Badge className="bg-emerald-500/10 text-emerald-100">Live inputs</Badge> : null}
-            {oilAlert.emailSent ? <Badge className="bg-rose-500/10 text-rose-100">Email sent</Badge> : null}
-          </div>
+          <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-[11px] uppercase tracking-[0.18em] text-slate-400">Recommendation</p>
+                <p className={cn("mt-2 text-3xl font-semibold tracking-tight", getActionTone(oilAlert))}>{actionLabel}</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge className={cn("border-transparent", getStatusTone(oilAlert))}>{statusLabel}</Badge>
+                {oilAlert.liveInputs ? <Badge className="bg-emerald-500/10 text-emerald-100">Live inputs</Badge> : null}
+              </div>
+            </div>
 
-          <p className="text-sm leading-6 text-slate-300">{oilAlert.reason}</p>
+            <p className="mt-3 text-sm leading-6 text-slate-200">{getActionSummary(oilAlert)}</p>
+            <p className="mt-1 text-xs leading-5 text-slate-400">{getActionSubline(oilAlert)}</p>
+          </section>
+
+          <p className="text-xs leading-6 text-slate-400">Engine detail: {oilAlert.reason}</p>
 
           <div className="grid gap-3 sm:grid-cols-2">
-            <Metric label="Signal" value={getDirectionLabel(oilAlert.direction)} detail={`Latest decision: ${decisionLabels[oilAlert.decision]}`} />
+            <Metric label="Action" value={actionLabel} detail={`${getDirectionLabel(oilAlert.direction)} • ${decisionLabels[oilAlert.decision]}`} />
             <Metric label="Confidence" value={`${oilAlert.confidence}/100`} detail={oilAlert.enabled ? "Composite score from price, Polymarket and news." : "Engine is currently disabled."} />
             <Metric
               label="Brent"
