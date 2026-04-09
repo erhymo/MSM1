@@ -1,34 +1,38 @@
-import type { OilAlertDirection } from "@/lib/alerts/oil-alert-types";
+import type { OilAlertDirection, OilAlertMarketTier } from "@/lib/alerts/oil-alert-types";
 
 export type OilAlertMarketConfig = {
   marketId: string;
   label: string;
   weight: number;
+  tier: OilAlertMarketTier;
   yesOutcomeOilBias: OilAlertDirection;
   thesis: string;
 };
 
 const configuredMarkets = [
   {
-    marketId: "567621",
-    label: "China/Taiwan invasion risk (2026)",
+    marketId: "1540766",
+    label: "Hormuz traffic returns to normal by end of April",
+    weight: 1.15,
+    tier: 1,
+    yesOutcomeOilBias: "bearish",
+    thesis: "Normalized Hormuz shipping lowers oil supply-risk premium and is bearish for oil.",
+  },
+  {
+    marketId: "1707830",
+    label: "Houthis successfully target shipping by April 30",
     weight: 1,
+    tier: 1,
     yesOutcomeOilBias: "bullish",
-    thesis: "Higher odds of a China/Taiwan conflict typically increase oil risk premium.",
+    thesis: "Successful attacks on commercial shipping raise disruption risk and are bullish for oil.",
   },
   {
-    marketId: "567687",
-    label: "Russia/Ukraine ceasefire (2026)",
-    weight: 0.85,
+    marketId: "1819243",
+    label: "QatarEnergy resumes LNG production by April 30",
+    weight: 0.65,
+    tier: 2,
     yesOutcomeOilBias: "bearish",
-    thesis: "Higher ceasefire odds can reduce geopolitical oil risk premium.",
-  },
-  {
-    marketId: "567688",
-    label: "Netanyahu out by end of 2026",
-    weight: 0.45,
-    yesOutcomeOilBias: "bearish",
-    thesis: "Lower regional tension risk is mildly bearish for oil risk premium.",
+    thesis: "Energy supply normalization in Qatar eases regional risk premium and is mildly bearish for oil.",
   },
 ] satisfies OilAlertMarketConfig[];
 
@@ -59,7 +63,11 @@ export const oilAlertConfig = {
     maxRecords: toNumber(process.env.OIL_ALERT_HEADLINES_MAX_RECORDS, 8, 1),
     oilKeywords: ["oil", "brent", "crude", "energy"],
     contextKeywords: ["trump", "iran", "israel", "taiwan", "china", "russia", "ukraine", "tariff", "sanctions", "opec", "saudi"],
-    bullishKeywords: ["attack", "strike", "war", "missile", "escalation", "sanctions", "conflict", "blockade", "shipping", "tariff", "iran"],
+    bullishKeywords: ["attack", "strike", "war", "missile", "escalation", "sanctions", "conflict", "blockade", "shipping", "hormuz", "iran"],
     bearishKeywords: ["ceasefire", "truce", "de-escalation", "talks", "peace", "surplus", "supply boost", "production increase"],
+    supplyShockKeywords: ["attack", "strike", "missile", "drone", "escalation", "blockade", "shipping", "tanker", "pipeline", "export disruption", "sanctions", "hormuz", "red sea"],
+    supplyReliefKeywords: ["ceasefire", "truce", "peace", "de-escalation", "talks", "sanctions relief", "pipeline restart", "exports resume", "production increase", "surplus"],
+    demandUpKeywords: ["stimulus", "rebound", "inventory draw", "travel demand", "refining demand", "strong demand", "china support", "opec cut"],
+    demandDownKeywords: ["recession", "slowdown", "weak demand", "inventory build", "tariff", "trade war", "manufacturing slump", "pmi contraction"],
   },
 } as const;

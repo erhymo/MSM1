@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { OilAlertDirection, OilAlertHeadlineSignal, OilAlertMarketSignal, OilAlertRunOptions, OilAlertRunResult, OilAlertRunTrigger } from "@/lib/alerts/oil-alert-types";
+import type { OilAlertDirection, OilAlertHeadlineSignal, OilAlertMarketSignal, OilAlertNewsCategory, OilAlertRunOptions, OilAlertRunResult, OilAlertRunTrigger } from "@/lib/alerts/oil-alert-types";
 import { oilAlertConfig } from "@/lib/config/oil-alerts";
 import { adminDb } from "@/lib/firebase/admin";
 import { appendOilAlertHistory, getOilAlertState, writeOilAlertState } from "@/lib/firebase/firestore-alert-service";
@@ -12,6 +12,12 @@ import { polymarketProvider } from "@/lib/providers/polymarket/provider";
 import { priceProvider } from "@/lib/providers/price/provider";
 import type { PolymarketMarketSnapshot } from "@/lib/providers/polymarket/provider";
 import type { FirestoreOilAlertObservedMarketDocument, FirestoreOilAlertStateDocument } from "@/lib/types/firestore";
+
+type OilAlertLayerEvaluation = {
+  direction: OilAlertDirection | null;
+  score: number;
+  alignedCount: number;
+};
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -64,12 +70,61 @@ function getDirectionFromSignedValue(value: number): OilAlertDirection | null {
   return null;
 }
 
+function getTierMultiplier(tier: number) {
+  if (tier === 1) return 1;
+  if (tier === 2) return 0.72;
+  return 0.42;
+}
+
+function normalizeHeadlineKey(title: string) {
+  return title.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function getSourceWeight(domain: string) {
+  return /(reuters|bloomberg|apnews|ft|wsj|cnbc)/i.test(domain) ? 1.15 : 1;
+}
+
+function getRecencyWeight(ageHours: number) {
+  if (ageHours <= 3) return 1.15;
+  if (ageHours <= 8) return 1;
+  if (ageHours <= 16) return 0.8;
+  return 0.6;
+}
+
+function evaluateMarketRegime(priceMovePercent: number): OilAlertLayerEvaluation & { actionableMove: boolean } {
+  const absoluteMove = Math.abs(priceMovePercent);
+  const direction = getDirectionFromSignedValue(priceMovePercent);
+  const baseScore = clamp((absoluteMove / oilAlertConfig.minPriceMovePercent) * 28, 0, 28);
+  const breakoutBonus = absoluteMove >= oilAlertConfig.minPriceMovePercent ? 12 : absoluteMove >= oilAlertConfig.minPriceMovePercent * 0.7 ? 6 : absoluteMove >= oilAlertConfig.minPriceMovePercent * 0.45 ? 2 : 0;
+
+  return {
+    direction,
+    score: round(direction ? clamp(baseScore + breakoutBonus, 0, 40) : 0, 2),
+    alignedCount: direction ? 1 : 0,
+    actionableMove: absoluteMove >= oilAlertConfig.minPriceMovePercent * 0.55,
+  };
+}
+
+function evaluateDirectionalLayer(values: number[]): OilAlertLayerEvaluation {
+  const bullish = values.reduce((sum, value) => sum + Math.max(0, value), 0);
+  const bearish = values.reduce((sum, value) => sum + Math.max(0, -value), 0);
+  const direction = bullish === bearish ? null : bullish > bearish ? "bullish" : "bearish";
+  const dominant = Math.max(bullish, bearish);
+
+  return {
+    direction,
+    score: round(dominant, 2),
+    alignedCount: direction ? values.filter((value) => getDirectionFromSignedValue(value) === direction).length : 0,
+  };
+}
+
 function getObservedMarkets(signals: OilAlertMarketSignal[]): FirestoreOilAlertObservedMarketDocument[] {
   return signals.map((signal) => ({
     marketId: signal.marketId,
     label: signal.label,
     question: signal.question,
     weight: signal.weight,
+    ...(signal.tier ? { tier: signal.tier } : {}),
     yesProbability: signal.yesProbability,
   }));
 }
@@ -77,7 +132,7 @@ function getObservedMarkets(signals: OilAlertMarketSignal[]): FirestoreOilAlertO
 function buildSignalHash(direction: OilAlertDirection, priceMovePercent: number, signals: OilAlertMarketSignal[], confidence: number) {
   const drivers = signals
     .slice(0, 2)
-    .map((signal) => `${signal.marketId}:${round(signal.oilDirectionalMovePp ?? 0, 1)}`)
+    .map((signal) => `${signal.marketId}:${round(signal.confirmationScore ?? signal.oilDirectionalMovePp ?? 0, 1)}`)
     .join(",");
 
   return `${direction}:${round(priceMovePercent, 2)}:${Math.round(confidence)}:${drivers}`;
@@ -110,8 +165,8 @@ function buildEmailBody(
     `Confidence: ${confidence}/100`,
     `Brent (XBRUSD): ${currentPrice} (${priceMovePercent > 0 ? "+" : ""}${round(priceMovePercent, 2)}%)`,
     "",
-    "Top Polymarket drivers:",
-    marketLines || "- No aligned Polymarket drivers",
+    "Top confirmation markets:",
+    marketLines || "- No aligned confirmation markets",
     "",
     "Top headlines:",
     headlineLines || "- No aligned headlines",
@@ -123,7 +178,7 @@ function buildEmailBody(
     `<h2>MSM1 Oil Alert (${directionLabel})</h2>`,
     `<p><strong>Confidence:</strong> ${confidence}/100</p>`,
     `<p><strong>Brent (XBRUSD):</strong> ${currentPrice} (${priceMovePercent > 0 ? "+" : ""}${round(priceMovePercent, 2)}%)</p>`,
-    `<p><strong>Top Polymarket drivers:</strong></p>`,
+    `<p><strong>Top confirmation markets:</strong></p>`,
     `<ul>${signals
       .slice(0, 3)
       .map((signal) => `<li>${signal.label}: YES ${round(signal.yesProbability * 100, 1)}% (${(signal.deltaPp ?? 0) > 0 ? "+" : ""}${round(signal.deltaPp ?? 0, 1)} pp)</li>`)
@@ -181,21 +236,62 @@ function ensurePersistenceAvailable() {
   }
 }
 
-function scoreHeadline(title: string) {
-  const lower = title.toLowerCase();
-  const matchedKeywords = [
-    ...oilAlertConfig.headlines.contextKeywords.filter((keyword) => lower.includes(keyword)),
-    ...oilAlertConfig.headlines.oilKeywords.filter((keyword) => lower.includes(keyword)),
+function scoreHeadline(input: { title: string; domain: string; publishedAt: string }, referenceTime: string) {
+  const lower = input.title.toLowerCase();
+  const contextHits = oilAlertConfig.headlines.contextKeywords.filter((keyword) => lower.includes(keyword));
+  const oilHits = oilAlertConfig.headlines.oilKeywords.filter((keyword) => lower.includes(keyword));
+  const categoryHits: Array<{ category: OilAlertNewsCategory; direction: OilAlertDirection; hits: string[]; multiplier: number }> = [
+    {
+      category: "supply-shock",
+      direction: "bullish",
+      hits: oilAlertConfig.headlines.supplyShockKeywords.filter((keyword) => lower.includes(keyword)),
+      multiplier: 3,
+    },
+    {
+      category: "supply-relief",
+      direction: "bearish",
+      hits: oilAlertConfig.headlines.supplyReliefKeywords.filter((keyword) => lower.includes(keyword)),
+      multiplier: 3,
+    },
+    {
+      category: "demand-up",
+      direction: "bullish",
+      hits: oilAlertConfig.headlines.demandUpKeywords.filter((keyword) => lower.includes(keyword)),
+      multiplier: 2.2,
+    },
+    {
+      category: "demand-down",
+      direction: "bearish",
+      hits: oilAlertConfig.headlines.demandDownKeywords.filter((keyword) => lower.includes(keyword)),
+      multiplier: 2.2,
+    },
   ];
-  const bullishHits = oilAlertConfig.headlines.bullishKeywords.filter((keyword) => lower.includes(keyword));
-  const bearishHits = oilAlertConfig.headlines.bearishKeywords.filter((keyword) => lower.includes(keyword));
-  const direction = bullishHits.length === bearishHits.length ? null : bullishHits.length > bearishHits.length ? "bullish" : "bearish";
-  const score = direction ? clamp(4 + matchedKeywords.length + Math.max(bullishHits.length, bearishHits.length) * 2, 1, 10) : 0;
+
+  const bullishBoost = oilAlertConfig.headlines.bullishKeywords.filter((keyword) => lower.includes(keyword)).length * 1.2;
+  const bearishBoost = oilAlertConfig.headlines.bearishKeywords.filter((keyword) => lower.includes(keyword)).length * 1.2;
+  const bullishRaw = categoryHits.filter((entry) => entry.direction === "bullish").reduce((sum, entry) => sum + entry.hits.length * entry.multiplier, bullishBoost);
+  const bearishRaw = categoryHits.filter((entry) => entry.direction === "bearish").reduce((sum, entry) => sum + entry.hits.length * entry.multiplier, bearishBoost);
+  const direction = bullishRaw === bearishRaw ? null : bullishRaw > bearishRaw ? "bullish" : "bearish";
+  const dominantCategory = categoryHits
+    .filter((entry) => entry.hits.length > 0 && (!direction || entry.direction === direction))
+    .sort((left, right) => right.hits.length * right.multiplier - left.hits.length * left.multiplier)[0]?.category;
+  const matchedKeywords = [
+    ...contextHits,
+    ...oilHits,
+    ...categoryHits.flatMap((entry) => entry.hits),
+  ];
+  const ageHours = getAgeHours(input.publishedAt, referenceTime);
+  const contextBoost = contextHits.length > 0 && oilHits.length > 0 ? 1.5 : contextHits.length || oilHits.length ? 0.75 : 0;
+  const score = direction
+    ? clamp(round((Math.max(bullishRaw, bearishRaw) + contextBoost) * getSourceWeight(input.domain) * getRecencyWeight(ageHours), 2), 1, 10)
+    : 0;
 
   return {
     direction,
+    category: dominantCategory,
     score,
-    matchedKeywords: [...new Set([...matchedKeywords, ...bullishHits, ...bearishHits])].slice(0, 8),
+    ageHours,
+    matchedKeywords: [...new Set(matchedKeywords)].slice(0, 8),
   } as const;
 }
 
@@ -277,6 +373,7 @@ export async function runOilAlertCheck(trigger: OilAlertRunTrigger, options: Oil
   const observedMarketBaseline = previousState?.lastPolymarketMarkets ?? [];
 
   const priceMovePercent = previousState ? getPercentChange(priceSnapshot.currentPrice, previousState.lastLivePrice) : 0;
+  const marketRegime = evaluateMarketRegime(priceMovePercent);
 
   const marketSignals = oilAlertConfig.markets
     .flatMap((marketConfig) => {
@@ -286,37 +383,35 @@ export async function runOilAlertCheck(trigger: OilAlertRunTrigger, options: Oil
       const previousMarket = previousState?.lastPolymarketMarkets.find((entry) => entry.marketId === marketConfig.marketId);
       const deltaPp = previousMarket ? (snapshot.yesProbability - previousMarket.yesProbability) * 100 : undefined;
       const signedOilMove = deltaPp === undefined ? undefined : marketConfig.yesOutcomeOilBias === "bullish" ? deltaPp : -deltaPp;
+      const confirmationScore = signedOilMove === undefined ? undefined : signedOilMove * marketConfig.weight * getTierMultiplier(marketConfig.tier);
 
       const signal: OilAlertMarketSignal = {
         marketId: snapshot.marketId,
         label: marketConfig.label,
         question: snapshot.question,
         weight: marketConfig.weight,
+        tier: marketConfig.tier,
         yesProbability: snapshot.yesProbability,
-        impliedDirection: signedOilMove === undefined ? null : getDirectionFromSignedValue(signedOilMove),
+        impliedDirection: confirmationScore === undefined ? null : getDirectionFromSignedValue(confirmationScore),
         ...(previousMarket ? { previousYesProbability: previousMarket.yesProbability } : {}),
         ...(deltaPp === undefined ? {} : { deltaPp: round(deltaPp, 2) }),
         ...(signedOilMove === undefined ? {} : { oilDirectionalMovePp: round(signedOilMove * marketConfig.weight, 2) }),
+        ...(confirmationScore === undefined ? {} : { confirmationScore: round(confirmationScore, 2) }),
       };
 
       return [signal];
     })
-    .sort((left, right) => Math.abs(right.oilDirectionalMovePp ?? 0) - Math.abs(left.oilDirectionalMovePp ?? 0));
+    .sort((left, right) => Math.abs(right.confirmationScore ?? 0) - Math.abs(left.confirmationScore ?? 0));
 
-  const bullishStrength = round(
-    marketSignals.reduce((sum, signal) => sum + Math.max(0, signal.oilDirectionalMovePp ?? 0), 0),
-    2,
-  );
-  const bearishStrength = round(
-    marketSignals.reduce((sum, signal) => sum + Math.max(0, -(signal.oilDirectionalMovePp ?? 0)), 0),
-    2,
-  );
-  const marketDirection = bullishStrength === bearishStrength ? null : bullishStrength > bearishStrength ? "bullish" : "bearish";
-  const dominantMarketStrength = Math.max(bullishStrength, bearishStrength);
-  const priceDirection = getDirectionFromSignedValue(priceMovePercent);
-  const scoredHeadlines: OilAlertHeadlineSignal[] = freshHeadlines
+  const confirmationLayerRaw = evaluateDirectionalLayer(marketSignals.map((signal) => signal.confirmationScore ?? 0));
+  const confirmationScore = round(clamp((confirmationLayerRaw.score / Math.max(0.5, oilAlertConfig.minPolymarketMovePp)) * 18, 0, 20), 2);
+  const dedupedHeadlines = freshHeadlines.filter((headline, index, collection) => {
+    const key = normalizeHeadlineKey(headline.title);
+    return collection.findIndex((entry) => normalizeHeadlineKey(entry.title) === key) === index;
+  });
+  const scoredHeadlines: OilAlertHeadlineSignal[] = dedupedHeadlines
     .map((headline) => {
-      const scored = scoreHeadline(headline.title);
+      const scored = scoreHeadline({ title: headline.title, domain: headline.domain, publishedAt: headline.publishedAt }, startedAt);
       return {
         title: headline.title,
         url: headline.url,
@@ -324,21 +419,48 @@ export async function runOilAlertCheck(trigger: OilAlertRunTrigger, options: Oil
         publishedAt: headline.publishedAt,
         direction: scored.direction,
         score: scored.score,
+        ...(scored.category ? { category: scored.category } : {}),
+        ...(typeof scored.ageHours === "number" ? { ageHours: scored.ageHours } : {}),
         matchedKeywords: scored.matchedKeywords,
       };
     })
     .filter((headline) => headline.score > 0)
-    .sort((left, right) => right.score - left.score);
-  const alignedSignals = marketSignals.filter((signal) => signal.impliedDirection && signal.impliedDirection === priceDirection);
-  const alignedHeadlines = scoredHeadlines.filter((headline) => headline.direction && headline.direction === priceDirection);
-  const topSignals = priceDirection ? alignedSignals.slice(0, 3) : marketSignals.slice(0, 3);
-  const topHeadlines = priceDirection ? alignedHeadlines.slice(0, 3) : scoredHeadlines.slice(0, 3);
-  const priceScore = clamp((Math.abs(priceMovePercent) / oilAlertConfig.minPriceMovePercent) * 30, 0, 40);
-  const marketScore = clamp((dominantMarketStrength / oilAlertConfig.minPolymarketMovePp) * 25, 0, 35);
-  const alignmentBonus = priceDirection && marketDirection && priceDirection === marketDirection ? 15 : 0;
-  const breadthBonus = clamp(Math.max(0, alignedSignals.length - 1) * 5, 0, 10);
-  const newsScore = clamp(topHeadlines.reduce((sum, headline) => sum + headline.score, 0), 0, 25);
-  const confidence = Math.round(clamp(priceScore + marketScore + alignmentBonus + breadthBonus + newsScore, 0, 100));
+    .sort((left, right) => right.score - left.score)
+    .filter((headline, index, collection) => {
+      const category = headline.category ?? "uncategorized";
+      return collection.filter((entry) => (entry.category ?? "uncategorized") === category).indexOf(headline) < 2 && index < 6;
+    });
+  const newsLayerRaw = evaluateDirectionalLayer(
+    scoredHeadlines.map((headline) => (headline.direction === "bullish" ? headline.score : headline.direction === "bearish" ? -headline.score : 0)),
+  );
+  const newsScore = round(clamp(newsLayerRaw.score * 1.35, 0, 25), 2);
+  const directionalScore = round(
+    (marketRegime.direction === "bullish" ? marketRegime.score : marketRegime.direction === "bearish" ? -marketRegime.score : 0)
+      + (newsLayerRaw.direction === "bullish" ? newsScore : newsLayerRaw.direction === "bearish" ? -newsScore : 0)
+      + (confirmationLayerRaw.direction === "bullish" ? confirmationScore : confirmationLayerRaw.direction === "bearish" ? -confirmationScore : 0),
+    2,
+  );
+  const blendedDirection = getDirectionFromSignedValue(directionalScore);
+  const alignedLayers = blendedDirection
+    ? [marketRegime.direction, newsLayerRaw.direction, confirmationLayerRaw.direction].filter((direction) => direction === blendedDirection).length
+    : 0;
+  const conflictingLayers = blendedDirection
+    ? [marketRegime.direction, newsLayerRaw.direction, confirmationLayerRaw.direction].filter((direction) => direction && direction !== blendedDirection).length
+    : 0;
+  const topSignals = blendedDirection ? marketSignals.filter((signal) => signal.impliedDirection === blendedDirection).slice(0, 3) : marketSignals.slice(0, 3);
+  const topHeadlines = blendedDirection ? scoredHeadlines.filter((headline) => headline.direction === blendedDirection).slice(0, 3) : scoredHeadlines.slice(0, 3);
+  const confidence = Math.round(
+    clamp(
+      marketRegime.score
+        + newsScore
+        + confirmationScore
+        + (alignedLayers >= 2 ? 12 : 0)
+        + (alignedLayers === 3 ? 8 : 0)
+        - conflictingLayers * 10,
+      0,
+      100,
+    ),
+  );
 
   const baseResult = {
     trigger,
@@ -346,11 +468,15 @@ export async function runOilAlertCheck(trigger: OilAlertRunTrigger, options: Oil
     dryRun,
     startedAt,
     confidence,
-    direction: priceDirection,
+    direction: blendedDirection ?? marketRegime.direction,
     emailSent: false,
     marketsChecked: marketSignals.length,
-    liveInputs: priceFreshEnough && freshMarketSnapshots.length >= oilAlertConfig.minFreshPolymarketMarkets,
+    liveInputs: priceFreshEnough && (freshMarketSnapshots.length > 0 || scoredHeadlines.length > 0),
     newsScore,
+    marketRegimeScore: marketRegime.score,
+    confirmationScore,
+    directionalScore,
+    alignedLayers,
     price: {
       current: priceSnapshot.currentPrice,
       ...(previousState ? { previous: previousState.lastLivePrice } : {}),
@@ -393,22 +519,6 @@ export async function runOilAlertCheck(trigger: OilAlertRunTrigger, options: Oil
     return result;
   }
 
-  if (freshMarketSnapshots.length < oilAlertConfig.minFreshPolymarketMarkets) {
-    const staleList = staleOrInactiveMarkets.map((market) => market.marketId).join(", ") || "none";
-    const result = buildResult({
-      ...baseResult,
-      status: "warning",
-      decision: "skipped-stale-polymarket",
-      reason: `Only ${freshMarketSnapshots.length} Polymarket markets passed freshness/active checks; need ${oilAlertConfig.minFreshPolymarketMarkets}. Filtered: ${staleList}`,
-    });
-
-    if (!dryRun) {
-      await writeOilAlertState(oilAlertConfig.alertId, toRunState(result, startedAt, priceSnapshot, previousState, observedMarketBaseline));
-      await appendOilAlertHistory(result).catch(() => undefined);
-    }
-    return result;
-  }
-
   const observedMarkets = getObservedMarkets(marketSignals);
 
   if (!previousState) {
@@ -416,7 +526,7 @@ export async function runOilAlertCheck(trigger: OilAlertRunTrigger, options: Oil
       ...baseResult,
       status: "ok",
       decision: "seeded",
-      reason: "Stored initial live baseline for Brent and Polymarket markets",
+      reason: "Stored initial live baseline for Brent and confirmation inputs",
       direction: null,
       confidence: 0,
     });
@@ -448,20 +558,26 @@ export async function runOilAlertCheck(trigger: OilAlertRunTrigger, options: Oil
   let cooldownUntil: string | undefined = previousState.cooldownUntil;
   let emailSent = false;
 
-  if (!priceDirection || Math.abs(priceMovePercent) < oilAlertConfig.minPriceMovePercent) {
+  if (!marketRegime.direction) {
     decision = "insufficient-move";
-    reason = `Brent moved ${round(priceMovePercent, 2)}%, below the ${oilAlertConfig.minPriceMovePercent}% threshold`;
-  } else if (!marketDirection || dominantMarketStrength < oilAlertConfig.minPolymarketMovePp) {
+    reason = `Brent moved ${round(priceMovePercent, 2)}%, which is too small to establish market regime`;
+  } else if (!blendedDirection) {
     decision = "insufficient-confidence";
-    reason = `Polymarket confirmation was too weak (${round(dominantMarketStrength, 2)} weighted pp)`;
-  } else if (marketDirection !== priceDirection) {
+    reason = "Market regime, news and confirmation do not point clearly in one oil direction";
+  } else if (!marketRegime.actionableMove && alignedLayers < 2) {
+    decision = "insufficient-move";
+    reason = `Brent moved ${round(priceMovePercent, 2)}%, below the actionable threshold without enough confirming catalysts`;
+  } else if (alignedLayers < 2) {
     decision = "insufficient-confidence";
-    reason = "Brent and Polymarket are moving in opposite directions";
+    const staleList = staleOrInactiveMarkets.map((market) => market.marketId).join(", ") || "none";
+    reason = freshMarketSnapshots.length || scoredHeadlines.length
+      ? `Need at least two aligned layers; got market=${marketRegime.direction ?? "none"}, news=${newsLayerRaw.direction ?? "none"}, confirm=${confirmationLayerRaw.direction ?? "none"}`
+      : `Only Brent regime is available. Confirmation inputs are too weak or stale (markets filtered: ${staleList})`;
   } else if (confidence < oilAlertConfig.minConfidence) {
     decision = "insufficient-confidence";
     reason = `Confidence ${confidence} is below threshold ${oilAlertConfig.minConfidence}`;
   } else {
-    const signalHash = buildSignalHash(priceDirection, priceMovePercent, topSignals, confidence);
+    const signalHash = buildSignalHash(blendedDirection, priceMovePercent, topSignals, confidence);
     const now = Date.now();
     const cooldownActive = previousState.cooldownUntil ? new Date(previousState.cooldownUntil).getTime() > now : false;
 
@@ -475,8 +591,8 @@ export async function runOilAlertCheck(trigger: OilAlertRunTrigger, options: Oil
       reason = "Same oil alert scenario was already sent recently";
     } else {
       decision = "triggered";
-      emailSubject = `MSM1 Oil Alert: ${priceDirection === "bullish" ? "Bullish" : "Bearish"} Brent signal (${confidence}/100)`;
-      const emailBody = buildEmailBody(priceDirection, confidence, priceSnapshot.currentPrice, priceMovePercent, topSignals, topHeadlines);
+      emailSubject = `MSM1 Oil Alert: ${blendedDirection === "bullish" ? "Bullish" : "Bearish"} Brent signal (${confidence}/100)`;
+      const emailBody = buildEmailBody(blendedDirection, confidence, priceSnapshot.currentPrice, priceMovePercent, topSignals, topHeadlines);
       if (!dryRun) {
         if (isOilAlertEmailConfigured()) {
           try {
@@ -510,13 +626,13 @@ export async function runOilAlertCheck(trigger: OilAlertRunTrigger, options: Oil
         }
       }
       cooldownUntil = new Date(now + oilAlertConfig.cooldownHours * 60 * 60 * 1000).toISOString();
-      reason = `${dryRun ? "Dry-run would trigger" : "Triggered"} ${priceDirection} oil alert with confidence ${confidence}${!dryRun && !emailSent ? " (email delivery disabled)" : ""}`;
+      reason = `${dryRun ? "Dry-run would trigger" : "Triggered"} ${blendedDirection} oil alert with confidence ${confidence}${!dryRun && !emailSent ? " (email delivery disabled)" : ""}`;
 
       if (!dryRun) {
         previousState.lastSentAt = startedAt;
         previousState.lastSignalHash = signalHash;
         previousState.cooldownUntil = cooldownUntil;
-        previousState.lastDirection = priceDirection;
+        previousState.lastDirection = blendedDirection;
       }
     }
   }
@@ -548,8 +664,11 @@ export async function runOilAlertCheck(trigger: OilAlertRunTrigger, options: Oil
       confidence,
       direction: result.direction,
       priceMovePercent: round(priceMovePercent, 2),
-      dominantMarketStrength: round(dominantMarketStrength, 2),
+      marketRegimeScore: marketRegime.score,
+      confirmationScore,
       newsScore: round(newsScore, 2),
+      directionalScore,
+      alignedLayers,
       dryRun,
       topMarkets: topSignals.map((signal) => signal.marketId).join(","),
     },

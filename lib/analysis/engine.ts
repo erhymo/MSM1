@@ -406,15 +406,15 @@ function getOilAlertReason(decision: OilAlertDashboardDecision) {
     case "disabled":
       return "Oil alert engine is disabled in server config.";
     case "not-seeded":
-      return "No oil alert baseline has been stored yet. The first live cron run will seed Brent and Polymarket state.";
+      return "No oil alert baseline has been stored yet. The first live cron run will seed Brent and confirmation state.";
     case "seeded":
-      return "Baseline stored. The next live run will compare Brent and Polymarket deltas.";
+      return "Baseline stored. The next live run will compare Brent, news and confirmation layers.";
     case "skipped-non-live-price":
       return "Latest run skipped because Brent price input was not live.";
     case "skipped-stale-price":
       return "Latest run skipped because Brent price input was older than the configured freshness limit.";
     case "skipped-stale-polymarket":
-      return "Latest run skipped because too few Polymarket markets were fresh and active enough.";
+      return "Latest run skipped because confirmation markets were too stale to use safely.";
     case "insufficient-move":
       return "Latest run stayed below the minimum Brent move threshold.";
     case "insufficient-confidence":

@@ -1,5 +1,9 @@
 export type OilAlertDirection = "bullish" | "bearish";
 
+export type OilAlertMarketTier = 1 | 2 | 3;
+
+export type OilAlertNewsCategory = "supply-shock" | "supply-relief" | "demand-up" | "demand-down";
+
 export type OilAlertDecision =
   | "disabled"
   | "seeded"
@@ -23,10 +27,12 @@ export interface OilAlertMarketSignal {
   label: string;
   question: string;
   weight: number;
+  tier?: OilAlertMarketTier;
   yesProbability: number;
   previousYesProbability?: number;
   deltaPp?: number;
   oilDirectionalMovePp?: number;
+  confirmationScore?: number;
   impliedDirection: OilAlertDirection | null;
 }
 
@@ -36,7 +42,9 @@ export interface OilAlertHeadlineSignal {
   domain: string;
   publishedAt: string;
   direction: OilAlertDirection | null;
+  category?: OilAlertNewsCategory;
   score: number;
+  ageHours?: number;
   matchedKeywords: string[];
 }
 
@@ -56,6 +64,10 @@ export interface OilAlertRunResult {
   marketsChecked: number;
   liveInputs: boolean;
   newsScore: number;
+  marketRegimeScore?: number;
+  confirmationScore?: number;
+  directionalScore?: number;
+  alignedLayers?: number;
   price: {
     current: number;
     previous?: number;

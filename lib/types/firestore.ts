@@ -182,6 +182,7 @@ export interface FirestoreOilAlertObservedMarketDocument {
   label: string;
   question: string;
   weight: number;
+  tier?: 1 | 2 | 3;
   yesProbability: number;
 }
 
@@ -218,6 +219,10 @@ export interface FirestoreOilAlertHistoryDocument {
   marketsChecked: number;
   liveInputs: boolean;
   newsScore: number;
+  marketRegimeScore?: number;
+  confirmationScore?: number;
+  directionalScore?: number;
+  alignedLayers?: number;
   price: {
     current: number;
     previous?: number;
@@ -231,10 +236,12 @@ export interface FirestoreOilAlertHistoryDocument {
     label: string;
     question: string;
     weight: number;
+    tier?: 1 | 2 | 3;
     yesProbability: number;
     previousYesProbability?: number;
     deltaPp?: number;
     oilDirectionalMovePp?: number;
+    confirmationScore?: number;
     impliedDirection: OilAlertDirection | null;
   }[];
   topHeadlines: {
@@ -243,7 +250,9 @@ export interface FirestoreOilAlertHistoryDocument {
     domain: string;
     publishedAt: string;
     direction: OilAlertDirection | null;
+    category?: "supply-shock" | "supply-relief" | "demand-up" | "demand-down";
     score: number;
+    ageHours?: number;
     matchedKeywords: string[];
   }[];
   cooldownUntil?: string;
