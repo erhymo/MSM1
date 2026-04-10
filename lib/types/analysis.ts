@@ -119,6 +119,11 @@ export interface PolicyRateSignal {
   baseRate: number;
   quoteRate: number;
   spread: number;
+  baseTwoYearYield?: number;
+  quoteTwoYearYield?: number;
+  twoYearSpread?: number;
+  twoYearSpreadChange5d?: number;
+  score?: number;
   bias: RateBias;
   source: string;
   updatedAt: string;

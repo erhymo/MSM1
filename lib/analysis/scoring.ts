@@ -1,5 +1,5 @@
 import { confidenceConfig, factorWeights, signalThresholds, tradePlanConfig } from "@/lib/config/analysis";
-import { getPolicyRate, policyRateConfig } from "@/lib/config/policy-rates";
+import { getPolicyRate, getTwoYearYield, getTwoYearYieldChange5d, policyRateConfig } from "@/lib/config/policy-rates";
 import type {
   AnalysisResult,
   COTSnapshot,
@@ -94,10 +94,20 @@ function getVolatilityScore(volatility: VolatilitySnapshot, regime: MarketRegime
   return round(32 * directionalBias);
 }
 
-function getPolicyRateBias(spread: number): PolicyRateSignal["bias"] {
-  if (spread >= 0.5) return "Bullish";
-  if (spread <= -0.5) return "Bearish";
+function getRateBias(score: number): PolicyRateSignal["bias"] {
+  if (score >= 12) return "Bullish";
+  if (score <= -12) return "Bearish";
   return "Neutral";
+}
+
+function getRateScore(rateSignal: PolicyRateSignal | null) {
+  if (!rateSignal) return 0;
+
+  const policyScore = clamp(rateSignal.spread * 16, -100, 100);
+  const twoYearScore = clamp((rateSignal.twoYearSpread ?? 0) * 20, -100, 100);
+  const momentumScore = clamp((rateSignal.twoYearSpreadChange5d ?? 0) * 180, -100, 100);
+
+  return round(clamp(policyScore * 0.35 + twoYearScore * 0.45 + momentumScore * 0.2, -100, 100));
 }
 
 function getPolicyRateSignal(ticker: string): PolicyRateSignal | null {
@@ -109,21 +119,42 @@ function getPolicyRateSignal(ticker: string): PolicyRateSignal | null {
   if (typeof baseRate !== "number" || typeof quoteRate !== "number") return null;
 
   const spread = Number((baseRate - quoteRate).toFixed(2));
-  return {
+  const baseTwoYearYield = getTwoYearYield(pair.baseCurrency);
+  const quoteTwoYearYield = getTwoYearYield(pair.quoteCurrency);
+  const baseTwoYearYieldChange5d = getTwoYearYieldChange5d(pair.baseCurrency);
+  const quoteTwoYearYieldChange5d = getTwoYearYieldChange5d(pair.quoteCurrency);
+  const twoYearSpread =
+    typeof baseTwoYearYield === "number" && typeof quoteTwoYearYield === "number"
+      ? Number((baseTwoYearYield - quoteTwoYearYield).toFixed(2))
+      : undefined;
+  const twoYearSpreadChange5d =
+    typeof baseTwoYearYieldChange5d === "number" && typeof quoteTwoYearYieldChange5d === "number"
+      ? Number((baseTwoYearYieldChange5d - quoteTwoYearYieldChange5d).toFixed(2))
+      : undefined;
+
+  const signalBase: PolicyRateSignal = {
     baseCurrency: pair.baseCurrency,
     quoteCurrency: pair.quoteCurrency,
     baseRate,
     quoteRate,
     spread,
-    bias: getPolicyRateBias(spread),
+    ...(typeof baseTwoYearYield === "number" ? { baseTwoYearYield } : {}),
+    ...(typeof quoteTwoYearYield === "number" ? { quoteTwoYearYield } : {}),
+    ...(typeof twoYearSpread === "number" ? { twoYearSpread } : {}),
+    ...(typeof twoYearSpreadChange5d === "number" ? { twoYearSpreadChange5d } : {}),
+    bias: "Neutral",
     source: policyRateConfig.source,
     updatedAt: policyRateConfig.updatedAt,
   };
-}
+  const score = getRateScore(signalBase);
 
-function getPolicyRateScore(rateSignal: PolicyRateSignal | null) {
-  if (!rateSignal) return 0;
-  return round(clamp(rateSignal.spread * 16, -100, 100));
+  return {
+    ...signalBase,
+    score,
+    bias: getRateBias(score),
+    source: policyRateConfig.source,
+    updatedAt: policyRateConfig.updatedAt,
+  };
 }
 
 function toContribution(name: string, weight: number, rawScore: number, summary: string): FactorContribution {
@@ -201,7 +232,7 @@ export function computeAnalysis(price: PriceSnapshot, cot: COTSnapshot, sentimen
   const momentumScore = getMomentumScore(price);
   const retailScore = getRetailScore(sentiment.retailLong);
   const rateSignal = getPolicyRateSignal(price.ticker);
-  const rateScore = getPolicyRateScore(rateSignal);
+  const rateScore = rateSignal?.score ?? 0;
   const directionalBias = Math.sign(cotScore + cotMomentumScore + trendScore + momentumScore + retailScore + rateScore) || Math.sign(price.dailyTrend.bias);
   const volatilityScore = getVolatilityScore(volatility, marketRegime, directionalBias);
 
@@ -213,10 +244,10 @@ export function computeAnalysis(price: PriceSnapshot, cot: COTSnapshot, sentimen
     ...(rateSignal
       ? [
           toContribution(
-            "Policy rates",
+            "Rates",
             factorWeights.rateSignal,
             rateScore,
-            `${rateSignal.baseCurrency} ${rateSignal.baseRate.toFixed(2)}% vs ${rateSignal.quoteCurrency} ${rateSignal.quoteRate.toFixed(2)}% (${formatSignedPercentPoints(rateSignal.spread)})`,
+            `${rateSignal.baseCurrency}/${rateSignal.quoteCurrency} policy ${formatSignedPercentPoints(rateSignal.spread)}; 2Y ${formatSignedPercentPoints(rateSignal.twoYearSpread ?? 0)}; 5d Δ ${formatSignedPercentPoints(rateSignal.twoYearSpreadChange5d ?? 0)}`,
           ),
         ]
       : []),
