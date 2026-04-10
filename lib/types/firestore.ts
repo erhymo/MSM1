@@ -1,4 +1,4 @@
-import type { AnalysisResult, AssetClass, DataFreshness, FactorContribution, Instrument, SignalType, SystemStatusItem, TradeSetupQuality } from "@/lib/types/analysis";
+import type { AnalysisResult, AssetClass, DataFreshness, FactorContribution, Instrument, PolicyRateSignal, SignalType, SystemStatusItem, TradeSetupQuality } from "@/lib/types/analysis";
 import type { OilAlertDecision, OilAlertDirection, OilAlertRunResult, OilAlertRunTrigger } from "@/lib/alerts/oil-alert-types";
 
 export interface FirestoreInstrumentDocument {
@@ -30,6 +30,7 @@ export interface FirestoreLatestAnalysisDocument {
   explanation: string;
   factorContributions: FactorContribution[];
   nokDisplay?: AnalysisResult["nokDisplay"];
+  rateSignal?: PolicyRateSignal;
   source: string;
   writtenAt: string;
 }

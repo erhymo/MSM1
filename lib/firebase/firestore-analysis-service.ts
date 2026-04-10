@@ -83,6 +83,7 @@ function toLatestAnalysisDocument(analysis: AnalysisResult, writtenAt: string): 
     explanation: analysis.explanation,
     factorContributions: analysis.factorContributions,
     ...(analysis.nokDisplay ? { nokDisplay: analysis.nokDisplay } : {}),
+    ...(analysis.rateSignal ? { rateSignal: analysis.rateSignal } : {}),
     source: firestoreAnalysisConfig.sourceLabel,
     writtenAt,
   };
@@ -210,6 +211,7 @@ function toAnalysisResult(doc: FirestoreLatestAnalysisDocument, history: Analysi
     explanation: doc.explanation,
     factorContributions: doc.factorContributions,
     nokDisplay: doc.nokDisplay,
+    rateSignal: doc.rateSignal,
     priceHistory: history.priceHistory,
     confidenceHistory: history.confidenceHistory,
     cotHistory: history.cotHistory,

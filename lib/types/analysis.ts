@@ -111,6 +111,19 @@ export interface NokDisplayContext {
   updatedAt: string;
 }
 
+export type RateBias = "Bullish" | "Neutral" | "Bearish";
+
+export interface PolicyRateSignal {
+  baseCurrency: string;
+  quoteCurrency: string;
+  baseRate: number;
+  quoteRate: number;
+  spread: number;
+  bias: RateBias;
+  source: string;
+  updatedAt: string;
+}
+
 export interface TimeframeIndicatorSnapshot {
   timeframe: Timeframe;
   bias: number;
@@ -184,6 +197,7 @@ export interface AnalysisResult {
   explanation: string;
   factorContributions: FactorContribution[];
   nokDisplay?: NokDisplayContext;
+  rateSignal?: PolicyRateSignal;
   priceHistory: HistoryPoint[];
   confidenceHistory: HistoryPoint[];
   cotHistory?: HistoryPoint[];

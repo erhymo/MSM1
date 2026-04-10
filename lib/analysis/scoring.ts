@@ -1,15 +1,18 @@
 import { confidenceConfig, factorWeights, signalThresholds, tradePlanConfig } from "@/lib/config/analysis";
+import { getPolicyRate, policyRateConfig } from "@/lib/config/policy-rates";
 import type {
   AnalysisResult,
   COTSnapshot,
   FactorContribution,
   MarketRegime,
+  PolicyRateSignal,
   PriceSnapshot,
   SentimentSnapshot,
   SignalType,
   TradeSetupQuality,
   VolatilitySnapshot,
 } from "@/lib/types/analysis";
+import { getInstrumentCurrencyPair } from "@/lib/utils/instrument-currency";
 
 type CoreAnalysis = Omit<AnalysisResult, "instrument" | "aiSummary" | "explanation">;
 
@@ -19,6 +22,10 @@ function clamp(value: number, min: number, max: number) {
 
 function round(value: number) {
   return Math.round(value);
+}
+
+function formatSignedPercentPoints(value: number) {
+  return `${value >= 0 ? "+" : ""}${value.toFixed(2)}pp`;
 }
 
 function getMarketRegime(price: PriceSnapshot, volatility: VolatilitySnapshot): MarketRegime {
@@ -85,6 +92,38 @@ function getVolatilityScore(volatility: VolatilitySnapshot, regime: MarketRegime
   if (volatility.atrPercent < 0.55) return round(20 * directionalBias);
   if (volatility.atrPercent <= 1.6) return round(62 * directionalBias);
   return round(32 * directionalBias);
+}
+
+function getPolicyRateBias(spread: number): PolicyRateSignal["bias"] {
+  if (spread >= 0.5) return "Bullish";
+  if (spread <= -0.5) return "Bearish";
+  return "Neutral";
+}
+
+function getPolicyRateSignal(ticker: string): PolicyRateSignal | null {
+  const pair = getInstrumentCurrencyPair(ticker);
+  if (!pair) return null;
+
+  const baseRate = getPolicyRate(pair.baseCurrency);
+  const quoteRate = getPolicyRate(pair.quoteCurrency);
+  if (typeof baseRate !== "number" || typeof quoteRate !== "number") return null;
+
+  const spread = Number((baseRate - quoteRate).toFixed(2));
+  return {
+    baseCurrency: pair.baseCurrency,
+    quoteCurrency: pair.quoteCurrency,
+    baseRate,
+    quoteRate,
+    spread,
+    bias: getPolicyRateBias(spread),
+    source: policyRateConfig.source,
+    updatedAt: policyRateConfig.updatedAt,
+  };
+}
+
+function getPolicyRateScore(rateSignal: PolicyRateSignal | null) {
+  if (!rateSignal) return 0;
+  return round(clamp(rateSignal.spread * 16, -100, 100));
 }
 
 function toContribution(name: string, weight: number, rawScore: number, summary: string): FactorContribution {
@@ -161,7 +200,9 @@ export function computeAnalysis(price: PriceSnapshot, cot: COTSnapshot, sentimen
   const trendScore = getTrendScore(price);
   const momentumScore = getMomentumScore(price);
   const retailScore = getRetailScore(sentiment.retailLong);
-  const directionalBias = Math.sign(cotScore + cotMomentumScore + trendScore + momentumScore + retailScore) || Math.sign(price.dailyTrend.bias);
+  const rateSignal = getPolicyRateSignal(price.ticker);
+  const rateScore = getPolicyRateScore(rateSignal);
+  const directionalBias = Math.sign(cotScore + cotMomentumScore + trendScore + momentumScore + retailScore + rateScore) || Math.sign(price.dailyTrend.bias);
   const volatilityScore = getVolatilityScore(volatility, marketRegime, directionalBias);
 
   const cotMomentumDirection = cotMomentumScore > 0 ? "accelerating" : cotMomentumScore < 0 ? "decelerating" : "flat";
@@ -169,6 +210,16 @@ export function computeAnalysis(price: PriceSnapshot, cot: COTSnapshot, sentimen
     toContribution("COT", factorWeights.cot, cotScore, `${cot.bias} large speculator bias`),
     toContribution("COT momentum", factorWeights.cotMomentum, cotMomentumScore, `Positioning ${cotMomentumDirection} over last 3 weeks`),
     toContribution("Trend", factorWeights.trend, trendScore, `${getTrendLabel(price, marketRegime)} across weekly/daily/4H`),
+    ...(rateSignal
+      ? [
+          toContribution(
+            "Policy rates",
+            factorWeights.rateSignal,
+            rateScore,
+            `${rateSignal.baseCurrency} ${rateSignal.baseRate.toFixed(2)}% vs ${rateSignal.quoteCurrency} ${rateSignal.quoteRate.toFixed(2)}% (${formatSignedPercentPoints(rateSignal.spread)})`,
+          ),
+        ]
+      : []),
     toContribution("Retail sentiment", factorWeights.retailSentiment, retailScore, `Retail long at ${sentiment.retailLong.toFixed(0)}% used contrarian`),
     toContribution("Momentum", factorWeights.momentum, momentumScore, `4H timing aligned at ${price.fourHourMomentum.bias}`),
     toContribution(
@@ -180,7 +231,7 @@ export function computeAnalysis(price: PriceSnapshot, cot: COTSnapshot, sentimen
   ];
 
   const score = clamp(factorContributions.reduce((sum, item) => sum + item.contribution, 0), -100, 100);
-  const relevantScores = [cotScore, cotMomentumScore, trendScore, retailScore, momentumScore, volatilityScore].filter((value) => Math.abs(value) >= 15);
+  const relevantScores = [cotScore, cotMomentumScore, trendScore, retailScore, momentumScore, volatilityScore, rateScore].filter((value) => Math.abs(value) >= 15);
   const alignedCount = relevantScores.filter((value) => Math.sign(value) === Math.sign(score)).length;
   const alignment = relevantScores.length ? alignedCount / relevantScores.length : 0.35;
   const fallbackCount = [price.freshness, cot.freshness, sentiment.freshness, volatility.freshness].filter(
@@ -222,6 +273,7 @@ export function computeAnalysis(price: PriceSnapshot, cot: COTSnapshot, sentimen
     target,
     riskReward,
     factorContributions,
+    ...(rateSignal ? { rateSignal } : {}),
     priceHistory: price.priceHistory,
     confidenceHistory: buildConfidenceHistory(confidence, momentumScore),
     cotHistory: cot.history,

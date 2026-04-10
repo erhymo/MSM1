@@ -1,10 +1,11 @@
 export const factorWeights = {
-  cot: 28,
+  cot: 25,
   cotMomentum: 7,
-  trend: 25,
-  retailSentiment: 20,
+  trend: 23,
+  rateSignal: 8,
+  retailSentiment: 18,
   momentum: 10,
-  volatility: 10,
+  volatility: 9,
 } as const;
 
 export const signalThresholds = {
