@@ -28,6 +28,8 @@ type InstrumentDetailModalProps = {
   onClose: () => void;
 };
 
+const openPositionsStorageKey = "msm1-open-positions-v1";
+
 const chartGridColor = "#22304d";
 const chartAxisColor = "#7c8aa5";
 const chartTooltipStyle = {
@@ -56,9 +58,115 @@ const tacticalTone: Record<TacticalAction, string> = {
   AVOID: "border-slate-300/20 bg-slate-400/10 text-slate-100",
 };
 
+type PositionAdvice = {
+  title: string;
+  detail: string;
+  tone: string;
+};
+
+function readStoredOpenPositions() {
+  if (typeof window === "undefined") return {};
+
+  try {
+    const raw = window.localStorage.getItem(openPositionsStorageKey);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return Object.fromEntries(Object.entries(parsed).filter(([, value]) => value === true)) as Record<string, boolean>;
+  } catch {
+    return {};
+  }
+}
+
+function writeStoredOpenPositions(openPositions: Record<string, boolean>) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(openPositionsStorageKey, JSON.stringify(openPositions));
+}
+
+function getPositionAwareAdvice(analysis: AnalysisResult, hasOpenPosition: boolean): PositionAdvice {
+  const tacticalAction = analysis.tacticalSignal?.action;
+  const managerGuidance = analysis.tradeManagerPlan?.guidance;
+  const ticker = analysis.instrument.ticker;
+
+  if (hasOpenPosition) {
+    if (tacticalAction === "EXIT" || managerGuidance === "EXIT_POSITION") {
+      return {
+        title: "Lukk eller reduser posisjonen",
+        detail: `${ticker} er markert som åpen, og signalene peker mot exit. Prioriter kapitalbeskyttelse fremfor å håpe på ny vending.`,
+        tone: "border-rose-300/25 bg-rose-400/15",
+      };
+    }
+
+    if (tacticalAction === "TAKE_PROFIT" || managerGuidance === "TAKE_PARTIAL_PROFIT") {
+      return {
+        title: "Ta delgevinst / sikre trade",
+        detail: `${ticker} er allerede i posisjon, og prisen ser strukket ut. Vurder delgevinst og flytt stop mot break-even hvis planen tillater det.`,
+        tone: "border-cyan-300/25 bg-cyan-400/15",
+      };
+    }
+
+    if (tacticalAction === "AVOID" || managerGuidance === "AVOID") {
+      return {
+        title: "Ikke øk posisjonen nå",
+        detail: `${ticker} har usikker timing eller datakvalitet. Hvis dere sitter i posisjonen, hold risikoen stram og unngå å legge til mer.`,
+        tone: "border-amber-300/25 bg-amber-400/15",
+      };
+    }
+
+    if (tacticalAction === "HOLD" || managerGuidance === "HOLD_POSITION" || tacticalAction?.startsWith("ENTER_")) {
+      return {
+        title: "Hold posisjonen, men ikke jag mer størrelse",
+        detail: `${ticker} støtter fortsatt eksisterende posisjon bedre enn en aggressiv ny add-on. Følg stop og delgevinst-planen.`,
+        tone: "border-blue-300/25 bg-blue-400/15",
+      };
+    }
+
+    return {
+      title: "Sitt rolig eller stram opp stop",
+      detail: `${ticker} har ikke tydelig nytt påfyll-signal. For eksisterende posisjon er beste tips å følge planen og beskytte nedsiden.`,
+      tone: "border-slate-300/20 bg-slate-400/10",
+    };
+  }
+
+  if (tacticalAction === "ENTER_LONG" || tacticalAction === "ENTER_SHORT" || managerGuidance === "OPEN_POSITION") {
+    return {
+      title: "Kan vurderes for ny inngang",
+      detail: `${ticker} har inngangssignal. Bruk trade manager-størrelse, respekter stop og unngå større risiko enn planen tilsier.`,
+      tone: "border-emerald-300/25 bg-emerald-400/15",
+    };
+  }
+
+  if (tacticalAction === "TAKE_PROFIT") {
+    return {
+      title: "Ikke jag inngang her",
+      detail: `${ticker} ser mer ut som gevinstsikring for dem som allerede er inne. Uten posisjon er beste tips å vente på ny pullback eller nytt signal.`,
+      tone: "border-cyan-300/25 bg-cyan-400/15",
+    };
+  }
+
+  if (tacticalAction === "EXIT" || tacticalAction === "AVOID" || managerGuidance === "AVOID") {
+    return {
+      title: "Hold deg ute nå",
+      detail: `${ticker} har for svak eller risikabel timing for ny trade. Vent til modellen gir renere setup.`,
+      tone: "border-rose-300/25 bg-rose-400/15",
+    };
+  }
+
+  return {
+    title: "Vent på bedre inngang",
+    detail: `${ticker} har ikke et tydelig nytt inngangssignal akkurat nå. La markedet bekrefte før dere åpner posisjon.`,
+    tone: "border-amber-300/25 bg-amber-400/15",
+  };
+}
+
 export function InstrumentDetailModal({ analysis, open, onClose }: InstrumentDetailModalProps) {
   const [remoteHistory, setRemoteHistory] = useState<AnalysisHistorySeries | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [openPositions, setOpenPositions] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    setOpenPositions(readStoredOpenPositions());
+  }, []);
 
   useEffect(() => {
     if (!open || !analysis) return;
@@ -103,6 +211,21 @@ export function InstrumentDetailModal({ analysis, open, onClose }: InstrumentDet
     [analysis, remoteHistory],
   );
 
+  const ticker = analysis?.instrument.ticker ?? null;
+  const hasOpenPosition = ticker ? Boolean(openPositions[ticker]) : false;
+
+  function updateOpenPosition(nextValue: boolean) {
+    if (!ticker) return;
+
+    setOpenPositions((current) => {
+      const next = { ...current };
+      if (nextValue) next[ticker] = true;
+      else delete next[ticker];
+      writeStoredOpenPositions(next);
+      return next;
+    });
+  }
+
   if (!analysis || !history) return null;
 
   const hasSentimentHistory = Boolean(history.sentimentHistory?.length);
@@ -111,6 +234,7 @@ export function InstrumentDetailModal({ analysis, open, onClose }: InstrumentDet
   const tactical = analysis.tacticalSignal;
   const tradeManager = analysis.tradeManagerPlan;
   const isNoTrade = analysis.signal === "NO_TRADE";
+  const positionAdvice = getPositionAwareAdvice(analysis, hasOpenPosition);
   const entryNok = formatApproxNokPrice(analysis.entry, analysis);
   const stopNok = isNoTrade ? null : formatApproxNokPrice(analysis.stopLoss, analysis);
   const targetNok = isNoTrade ? null : formatApproxNokPrice(analysis.target, analysis);
@@ -171,6 +295,32 @@ export function InstrumentDetailModal({ analysis, open, onClose }: InstrumentDet
                 No Trade is active because the current setup does not yet have enough conviction or alignment to justify a plan.
               </div>
             ) : null}
+
+            <div className="rounded-[26px] border border-cyan-300/20 bg-cyan-400/10 p-4">
+              <label className="flex cursor-pointer items-start gap-3">
+                <input
+                  type="checkbox"
+                  checked={hasOpenPosition}
+                  onChange={(event) => updateOpenPosition(event.target.checked)}
+                  className="mt-1 h-4 w-4 rounded border-white/20 bg-black/30 accent-cyan-400"
+                />
+                <span>
+                  <span className="block text-sm font-semibold text-cyan-50">Vi har denne posisjonen</span>
+                  <span className="mt-1 block text-xs leading-5 text-cyan-100/80">
+                    Kryss av hvis dere faktisk sitter i {analysis.instrument.ticker}. Da tolkes tactical-signalet som posisjonsstyring, ikke bare ny inngang.
+                  </span>
+                </span>
+              </label>
+
+              <div className={cn("mt-4 rounded-2xl border p-3", positionAdvice.tone)}>
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-xs uppercase tracking-[0.16em] text-white/70">Beste tips nå</p>
+                  <Badge className="bg-black/10 text-white">{hasOpenPosition ? "I posisjon" : "Ingen posisjon"}</Badge>
+                </div>
+                <p className="mt-2 text-base font-semibold text-white">{positionAdvice.title}</p>
+                <p className="mt-1.5 text-sm leading-6 text-white/80">{positionAdvice.detail}</p>
+              </div>
+            </div>
 
             {tactical ? (
               <div className="rounded-[26px] border border-white/10 bg-white/[0.03] p-4">
