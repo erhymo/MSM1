@@ -9,6 +9,16 @@ type TacticalInput = {
   marketRegime: MarketRegime;
 };
 
+const entryThresholds = {
+  directionalScore: 50,
+  swingConfidence: 60,
+  momentum4h: 30,
+  dailyAlignment: 25,
+  swingAlignment: 35,
+  maxStretchAtr: 0.8,
+  maxPullbackAtr: -1.35,
+} as const;
+
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
 }
@@ -81,7 +91,7 @@ function getReason(action: TacticalSignal["action"], direction: number, stretchI
   if (action === "AVOID") return "Tactical timing is unreliable because price data or volatility conditions are not clean enough.";
   if (action === "TAKE_PROFIT") return `Swing remains ${side}, but the move is stretched versus recent ATR; consider securing gains rather than adding.`;
   if (action === "EXIT") return `Short-term momentum is now working against the ${side} swing bias.`;
-  if (action === "ENTER_LONG" || action === "ENTER_SHORT") return `Swing bias, 4H momentum and daily structure are aligned, and price is not overly stretched.`;
+  if (action === "ENTER_LONG" || action === "ENTER_SHORT") return `High-conviction entry: swing bias, 4H momentum and daily structure are aligned without a stretched price.`;
   if (action === "HOLD") return `Swing bias is still ${side}; tactical conditions support holding more than adding aggressively.`;
   if (!direction) return "No clear swing edge yet, so tactical layer stays patient.";
   if (!momentumAligned) return `Swing is ${side}, but 4H momentum has not confirmed a fresh entry.`;
@@ -115,9 +125,19 @@ export function computeTacticalSignal({ price, volatility, swingSignal, swingSco
   );
   const directionalScore = direction ? score * direction : 0;
   const staleTiming = price.freshness.mode === "fallback" || volatility.freshness.mode === "fallback";
-  const stretchedWithTrend = direction !== 0 && stretchInAtr >= 1.15 && components.momentum4h * direction >= 12;
+  const stretchedWithTrend = direction !== 0 && stretchInAtr >= 1.05 && components.momentum4h * direction >= 10;
   const reversalAgainstSwing = direction !== 0 && directionalScore <= -28 && components.momentum4h * direction <= -20;
   const tooVolatile = marketRegime === "Volatile" && volatility.atrPercent >= 2.1;
+  const hasDirectionalSwing = swingSignal === "STRONG_BUY" || swingSignal === "BUY" || swingSignal === "STRONG_SELL" || swingSignal === "SELL";
+  const hasCleanEntry =
+    hasDirectionalSwing &&
+    directionalScore >= entryThresholds.directionalScore &&
+    swingConfidence >= entryThresholds.swingConfidence &&
+    components.momentum4h * direction >= entryThresholds.momentum4h &&
+    components.dailyAlignment * direction >= entryThresholds.dailyAlignment &&
+    components.swingAlignment * direction >= entryThresholds.swingAlignment &&
+    stretchInAtr < entryThresholds.maxStretchAtr &&
+    stretchInAtr > entryThresholds.maxPullbackAtr;
 
   const action: TacticalSignal["action"] = staleTiming || tooVolatile
     ? "AVOID"
@@ -127,11 +147,11 @@ export function computeTacticalSignal({ price, volatility, swingSignal, swingSco
         ? "TAKE_PROFIT"
         : reversalAgainstSwing
           ? "EXIT"
-          : direction > 0 && score >= 35 && components.dailyAlignment > 0
+          : direction > 0 && hasCleanEntry
             ? "ENTER_LONG"
-            : direction < 0 && score <= -35 && components.dailyAlignment < 0
+            : direction < 0 && hasCleanEntry
               ? "ENTER_SHORT"
-              : directionalScore >= 10
+              : directionalScore >= 18
                 ? "HOLD"
                 : "WAIT";
 
