@@ -20,17 +20,23 @@ function getConfidenceBucket(confidence: number) {
   return "0-49";
 }
 
-function toMetricRow(label: string, audits: FirestoreRecommendationAuditDocument[], horizonHours: number): FirestoreModelReviewMetricRow {
-  const outcomes = audits.map((audit) => getReadyOutcome(audit, horizonHours)).filter((item) => item !== null);
-  const directionalWins = outcomes.map((item) => item.directionalWin).filter((item): item is boolean => typeof item === "boolean");
-  const returnValues = outcomes.map((item) => item.returnPercent ?? 0);
+type MetricOptions = {
+  returnSelector?: (audit: FirestoreRecommendationAuditDocument, horizonHours: number) => number;
+  winSelector?: (audit: FirestoreRecommendationAuditDocument, horizonHours: number) => boolean | undefined;
+  confidenceSelector?: (audit: FirestoreRecommendationAuditDocument) => number;
+};
+
+function toMetricRow(label: string, audits: FirestoreRecommendationAuditDocument[], horizonHours: number, options: MetricOptions = {}): FirestoreModelReviewMetricRow {
+  const directionalWins = audits.map((audit) => options.winSelector?.(audit, horizonHours) ?? getReadyOutcome(audit, horizonHours)?.directionalWin).filter((item): item is boolean => typeof item === "boolean");
+  const returnValues = audits.map((audit) => options.returnSelector?.(audit, horizonHours) ?? getReadyOutcome(audit, horizonHours)?.returnPercent ?? 0);
+  const confidenceValues = audits.map((audit) => options.confidenceSelector?.(audit) ?? audit.confidence);
 
   return {
     label,
     samples: audits.length,
     avgReturnPercent: round(returnValues.reduce((sum, value) => sum + value, 0) / Math.max(returnValues.length, 1)),
     hitRatePercent: round((directionalWins.filter(Boolean).length / Math.max(directionalWins.length, 1)) * 100),
-    avgConfidence: round(audits.reduce((sum, audit) => sum + audit.confidence, 0) / Math.max(audits.length, 1)),
+    avgConfidence: round(confidenceValues.reduce((sum, value) => sum + value, 0) / Math.max(confidenceValues.length, 1)),
   };
 }
 
@@ -38,6 +44,7 @@ function groupRows(
   audits: FirestoreRecommendationAuditDocument[],
   horizonHours: number,
   keyBuilder: (audit: FirestoreRecommendationAuditDocument) => string,
+  options: MetricOptions = {},
 ) {
   const groups = new Map<string, FirestoreRecommendationAuditDocument[]>();
   for (const audit of audits) {
@@ -46,8 +53,16 @@ function groupRows(
   }
 
   return [...groups.entries()]
-    .map(([label, entries]) => toMetricRow(label, entries, horizonHours))
+    .map(([label, entries]) => toMetricRow(label, entries, horizonHours, options))
     .sort((left, right) => right.samples - left.samples || right.hitRatePercent - left.hitRatePercent);
+}
+
+function getTacticalReturn(audit: FirestoreRecommendationAuditDocument, horizonHours: number) {
+  return getReadyOutcome(audit, horizonHours)?.tacticalReturnPercent ?? getReadyOutcome(audit, horizonHours)?.returnPercent ?? 0;
+}
+
+function getTacticalWin(audit: FirestoreRecommendationAuditDocument, horizonHours: number) {
+  return getReadyOutcome(audit, horizonHours)?.tacticalDirectionalWin;
 }
 
 export function buildModelReviewMetrics(
@@ -62,5 +77,15 @@ export function buildModelReviewMetrics(
     byConfidenceBucket: groupRows(completed, horizonHours, (audit) => getConfidenceBucket(audit.confidence)),
     byRegime: groupRows(completed, horizonHours, (audit) => audit.marketRegime),
     byFreshnessMode: groupRows(completed, horizonHours, (audit) => audit.freshnessMode),
+    byTacticalAction: groupRows(completed, horizonHours, (audit) => audit.tacticalAction ?? "none", {
+      returnSelector: getTacticalReturn,
+      winSelector: getTacticalWin,
+      confidenceSelector: (audit) => audit.tacticalConfidence ?? audit.confidence,
+    }),
+    byTradeGuidance: groupRows(completed, horizonHours, (audit) => audit.tradeGuidance ?? "none", {
+      returnSelector: getTacticalReturn,
+      winSelector: getTacticalWin,
+      confidenceSelector: (audit) => audit.tacticalConfidence ?? audit.confidence,
+    }),
   };
 }

@@ -22,6 +22,13 @@ function getDirectionalMultiplier(signal: FirestoreRecommendationAuditDocument["
   return 1;
 }
 
+function getTacticalMultiplier(audit: FirestoreRecommendationAuditDocument) {
+  if (audit.tacticalAction === "ENTER_LONG") return 1;
+  if (audit.tacticalAction === "ENTER_SHORT") return -1;
+  if (audit.tacticalAction === "HOLD") return getDirectionalMultiplier(audit.signal);
+  return null;
+}
+
 function toCurrentPrice(entry: FirestoreRawMarketDataDocument) {
   const value = entry.values.currentPrice;
   return typeof value === "number" && Number.isFinite(value) ? value : null;
@@ -47,8 +54,10 @@ function evaluateOutcomeWindow(
   }
 
   const multiplier = getDirectionalMultiplier(audit.signal);
+  const tacticalMultiplier = getTacticalMultiplier(audit);
   const observedSeries = futureEntries.filter((entry) => entry.capturedAt <= observedAt).map(toCurrentPrice).filter((value): value is number => value !== null);
   const directionalReturns = observedSeries.map((price) => ((price - audit.entry) / audit.entry) * 100 * multiplier);
+  const tacticalReturns = tacticalMultiplier === null ? [] : observedSeries.map((price) => ((price - audit.entry) / audit.entry) * 100 * tacticalMultiplier);
   const targetHit = multiplier === 1 ? observedSeries.some((price) => price >= audit.target) : observedSeries.some((price) => price <= audit.target);
   const stopHit = multiplier === 1 ? observedSeries.some((price) => price <= audit.stopLoss) : observedSeries.some((price) => price >= audit.stopLoss);
   const directionalWin =
@@ -70,6 +79,14 @@ function evaluateOutcomeWindow(
     targetHit,
     stopHit,
     ...(typeof directionalWin === "boolean" ? { directionalWin } : {}),
+    ...(tacticalMultiplier === null
+      ? {}
+      : {
+          tacticalReturnPercent: round(((observedPrice - audit.entry) / audit.entry) * 100 * tacticalMultiplier),
+          tacticalDirectionalWin: ((observedPrice - audit.entry) / audit.entry) * 100 * tacticalMultiplier > 0,
+          tacticalMaxFavorablePercent: round(Math.max(...tacticalReturns, 0)),
+          tacticalMaxAdversePercent: round(Math.min(...tacticalReturns, 0)),
+        }),
   };
 }
 

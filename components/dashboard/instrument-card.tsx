@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import type { AnalysisResult, TacticalAction } from "@/lib/types/analysis";
 import { cn } from "@/lib/utils/cn";
-import { formatApproxNokPrice, formatPercent, formatPrice, formatRelativeTime, SIGNAL_LABELS, TACTICAL_LABELS } from "@/lib/utils/format";
+import { formatApproxNokPrice, formatNok, formatPercent, formatPrice, formatRelativeTime, SIGNAL_LABELS, TACTICAL_LABELS } from "@/lib/utils/format";
 
 const signalTone: Record<
   AnalysisResult["signal"],
@@ -81,6 +81,7 @@ export function InstrumentCard({ analysis, onSelect }: InstrumentCardProps) {
           : "bg-slate-400";
   const tone = signalTone[analysis.signal];
   const tactical = analysis.tacticalSignal;
+  const tradeManager = analysis.tradeManagerPlan;
   const isNoTrade = analysis.signal === "NO_TRADE";
   const entryNok = formatApproxNokPrice(analysis.entry, analysis);
   const stopNok = isNoTrade ? null : formatApproxNokPrice(analysis.stopLoss, analysis);
@@ -160,6 +161,20 @@ export function InstrumentCard({ analysis, onSelect }: InstrumentCardProps) {
             </div>
           </div>
 
+          {tradeManager ? (
+            <div className="mt-4 rounded-3xl border border-white/10 bg-black/15 p-4">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <p className="text-[11px] uppercase tracking-[0.18em] text-slate-400">Risk manager</p>
+                <p className="text-xs text-slate-400">{formatPercent(tradeManager.riskPercent, 1)} risk</p>
+              </div>
+              <div className="grid grid-cols-2 gap-2.5">
+                <TradeMetric label="Max risk" value={formatNok(tradeManager.riskAmountNok)} />
+                <TradeMetric label="Size" value={formatUnits(tradeManager.suggestedUnits)} muted={!tradeManager.suggestedUnits} />
+              </div>
+              <p className="mt-3 line-clamp-2 text-xs leading-5 text-slate-300">{tradeManager.summary}</p>
+            </div>
+          ) : null}
+
           <div className="mt-auto space-y-3 pt-4 text-sm">
             <div className="flex items-center justify-between text-slate-200">
               <span className="flex items-center gap-2 text-slate-300">
@@ -218,4 +233,9 @@ function TradeMetric({
       {secondaryValue ? <p className="mt-1 text-xs text-slate-400">{secondaryValue}</p> : null}
     </div>
   );
+}
+
+function formatUnits(value?: number) {
+  if (!value) return "—";
+  return value.toLocaleString("nb-NO");
 }

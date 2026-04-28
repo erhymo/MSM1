@@ -85,6 +85,7 @@ function toLatestAnalysisDocument(analysis: AnalysisResult, writtenAt: string): 
     ...(analysis.nokDisplay ? { nokDisplay: analysis.nokDisplay } : {}),
     ...(analysis.rateSignal ? { rateSignal: analysis.rateSignal } : {}),
     ...(analysis.tacticalSignal ? { tacticalSignal: analysis.tacticalSignal } : {}),
+    ...(analysis.tradeManagerPlan ? { tradeManagerPlan: analysis.tradeManagerPlan } : {}),
     source: firestoreAnalysisConfig.sourceLabel,
     writtenAt,
   };
@@ -126,6 +127,15 @@ function toRecommendationAuditDocument(
     explanation: analysis.explanation,
     factorContributions: analysis.factorContributions,
     ...(analysis.tacticalSignal ? { tacticalSignal: analysis.tacticalSignal } : {}),
+    ...(analysis.tacticalSignal
+      ? {
+          tacticalAction: analysis.tacticalSignal.action,
+          tacticalScore: analysis.tacticalSignal.score,
+          tacticalConfidence: analysis.tacticalSignal.confidence,
+        }
+      : {}),
+    ...(analysis.tradeManagerPlan ? { tradeManagerPlan: analysis.tradeManagerPlan } : {}),
+    ...(analysis.tradeManagerPlan ? { tradeGuidance: analysis.tradeManagerPlan.guidance } : {}),
     outcomes: modelReviewConfig.outcomeWindowsHours.map((horizonHours) => ({
       horizonHours,
       targetTime: new Date(new Date(writtenAt).getTime() + horizonHours * 60 * 60 * 1000).toISOString(),
@@ -215,6 +225,7 @@ function toAnalysisResult(doc: FirestoreLatestAnalysisDocument, history: Analysi
     nokDisplay: doc.nokDisplay,
     rateSignal: doc.rateSignal,
     tacticalSignal: doc.tacticalSignal,
+    tradeManagerPlan: doc.tradeManagerPlan,
     priceHistory: history.priceHistory,
     confidenceHistory: history.confidenceHistory,
     cotHistory: history.cotHistory,

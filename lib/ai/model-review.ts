@@ -8,6 +8,7 @@ type ModelReviewNarrative = Pick<FirestoreModelReviewReportDocument, "headline" 
 function buildTemplateNarrative(input: Pick<FirestoreModelReviewReportDocument, "horizonHours" | "completeAuditCount" | "metrics">): ModelReviewNarrative {
   const strongest = [...input.metrics.bySignal].sort((left, right) => right.hitRatePercent - left.hitRatePercent)[0];
   const weakest = [...input.metrics.bySignal].sort((left, right) => left.hitRatePercent - right.hitRatePercent)[0];
+  const strongestTactical = [...(input.metrics.byTacticalAction ?? [])].sort((left, right) => right.hitRatePercent - left.hitRatePercent)[0];
   const live = input.metrics.byFreshnessMode.find((row) => row.label === "live");
   const fallback = input.metrics.byFreshnessMode.find((row) => row.label === "fallback");
   const recommendations = [
@@ -16,13 +17,14 @@ function buildTemplateNarrative(input: Pick<FirestoreModelReviewReportDocument, 
     live && fallback && live.hitRatePercent > fallback.hitRatePercent
       ? `Treat fallback-fed recommendations more conservatively; live data is outperforming fallback by ${Math.max(0, live.hitRatePercent - fallback.hitRatePercent).toFixed(1)} percentage points.`
       : "Data freshness is not showing a clear penalty yet; keep monitoring live vs fallback splits before tightening filters.",
+    strongestTactical ? `Use tactical ${strongestTactical.label} as the first timing bucket to review; it has ${strongestTactical.samples} samples and ${strongestTactical.hitRatePercent}% tactical hit rate.` : "Collect more tactical samples before changing timing thresholds.",
   ];
 
   return {
     reviewMode: "template",
     headline: `${input.completeAuditCount} completed audits reviewed over ${input.horizonHours}h horizon`,
     summary: `Directional hit rate is ${input.metrics.total.hitRatePercent}% with average directional return ${input.metrics.total.avgReturnPercent}%. The strongest signal bucket is ${strongest?.label ?? "n/a"}, while ${weakest?.label ?? "n/a"} currently lags and deserves the next calibration pass.`,
-    recommendations,
+    recommendations: recommendations.slice(0, 3),
   };
 }
 

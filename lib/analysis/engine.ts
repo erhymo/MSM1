@@ -4,6 +4,7 @@ import { aiSummaryService } from "@/lib/ai/summary";
 import { templateSummaryProvider } from "@/lib/ai/template-summary-provider";
 import { enrichAnalysesWithNokDisplay } from "@/lib/analysis/nok-display";
 import { computeAnalysis } from "@/lib/analysis/scoring";
+import { enrichAnalysesWithTradeManagerPlan } from "@/lib/analysis/trade-manager";
 import { instruments } from "@/lib/config/instruments";
 import { oilAlertConfig } from "@/lib/config/oil-alerts";
 import { adminDb } from "@/lib/firebase/admin";
@@ -330,7 +331,8 @@ async function buildTemplateSnapshot(bundles: ProviderBundle[], extraStatusItems
     }),
   );
 
-  const sortedAnalyses = analyses.sort(compareAnalysisResults);
+  const analysesWithTradeManagerPlan = enrichAnalysesWithTradeManagerPlan(analyses);
+  const sortedAnalyses = analysesWithTradeManagerPlan.sort(compareAnalysisResults);
   const fallbackCount = sortedAnalyses.filter((analysis) => analysis.freshness.mode === "fallback").length;
 
   return {
@@ -371,7 +373,8 @@ export async function buildComputedDashboardState(): Promise<ComputedDashboardSt
   );
 
   const analysesWithNokDisplay = await enrichAnalysesWithNokDisplay(analyses);
-  const sortedAnalyses = analysesWithNokDisplay.sort(compareAnalysisResults);
+  const analysesWithTradeManagerPlan = enrichAnalysesWithTradeManagerPlan(analysesWithNokDisplay);
+  const sortedAnalyses = analysesWithTradeManagerPlan.sort(compareAnalysisResults);
   const fallbackCount = sortedAnalyses.filter((analysis) => analysis.freshness.mode === "fallback").length;
 
   return {

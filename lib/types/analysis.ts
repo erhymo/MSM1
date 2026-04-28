@@ -146,6 +146,34 @@ export interface TacticalSignal {
   };
 }
 
+export type TradeManagerGuidance = "OPEN_POSITION" | "HOLD_POSITION" | "WAIT" | "TAKE_PARTIAL_PROFIT" | "EXIT_POSITION" | "AVOID";
+
+export interface TradeManagerPlan {
+  guidance: TradeManagerGuidance;
+  accountEquityNok: number;
+  riskPercent: number;
+  riskAmountNok: number;
+  maxRiskPercent: number;
+  maxRiskAmountNok: number;
+  maxNotionalNok: number;
+  unitLabel: string;
+  suggestedUnits?: number;
+  notionalValueNok?: number;
+  riskPerUnitNok?: number;
+  estimatedLossAtStopNok?: number;
+  estimatedProfitAtTargetNok?: number;
+  partialTakeProfit: {
+    triggerR: number;
+    closePercent: number;
+    moveStopTo: "BREAK_EVEN";
+    price?: number;
+    estimatedRealizedProfitNok?: number;
+  };
+  summary: string;
+  notes: string[];
+  source: string;
+}
+
 export interface TimeframeIndicatorSnapshot {
   timeframe: Timeframe;
   bias: number;
@@ -221,6 +249,7 @@ export interface AnalysisResult {
   nokDisplay?: NokDisplayContext;
   rateSignal?: PolicyRateSignal;
   tacticalSignal?: TacticalSignal;
+  tradeManagerPlan?: TradeManagerPlan;
   priceHistory: HistoryPoint[];
   confidenceHistory: HistoryPoint[];
   cotHistory?: HistoryPoint[];

@@ -20,7 +20,7 @@ import { Modal } from "@/components/ui/modal";
 import type { AnalysisResult, TacticalAction } from "@/lib/types/analysis";
 import type { AnalysisHistorySeries } from "@/lib/types/firestore";
 import { cn } from "@/lib/utils/cn";
-import { formatApproxNokPrice, formatPercent, formatPrice, formatRelativeTime, SIGNAL_LABELS, TACTICAL_LABELS } from "@/lib/utils/format";
+import { formatApproxNokPrice, formatNok, formatPercent, formatPrice, formatRelativeTime, SIGNAL_LABELS, TACTICAL_LABELS } from "@/lib/utils/format";
 
 type InstrumentDetailModalProps = {
   analysis: AnalysisResult | null;
@@ -109,6 +109,7 @@ export function InstrumentDetailModal({ analysis, open, onClose }: InstrumentDet
   const hasCotHistory = Boolean(history.cotHistory?.length);
   const freshnessLabel = analysis.freshness.mode === "fallback" ? "Fallback active" : "Live provider data";
   const tactical = analysis.tacticalSignal;
+  const tradeManager = analysis.tradeManagerPlan;
   const isNoTrade = analysis.signal === "NO_TRADE";
   const entryNok = formatApproxNokPrice(analysis.entry, analysis);
   const stopNok = isNoTrade ? null : formatApproxNokPrice(analysis.stopLoss, analysis);
@@ -187,6 +188,30 @@ export function InstrumentDetailModal({ analysis, open, onClose }: InstrumentDet
                   <TacticalStat label="Volatility" value={tactical.components.volatility} />
                   <TacticalStat label="Swing" value={tactical.components.swingAlignment} />
                 </div>
+              </div>
+            ) : null}
+
+            {tradeManager ? (
+              <div className="rounded-[26px] border border-white/10 bg-black/20 p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.16em] text-slate-400">Trade manager</p>
+                    <p className="mt-1 text-sm text-slate-300">10,000 NOK account · {formatPercent(tradeManager.riskPercent, 1)} risk plan</p>
+                  </div>
+                  <Badge className="bg-white/5 text-slate-200">{tradeManager.guidance.replaceAll("_", " ")}</Badge>
+                </div>
+                <p className="mt-3 text-sm leading-6 text-slate-200">{tradeManager.summary}</p>
+                <div className="mt-4 grid gap-2 sm:grid-cols-3">
+                  <RiskStat label="Risk amount" value={formatNok(tradeManager.riskAmountNok)} />
+                  <RiskStat label="Suggested size" value={formatUnits(tradeManager.suggestedUnits)} secondary={tradeManager.unitLabel} muted={!tradeManager.suggestedUnits} />
+                  <RiskStat label="Notional cap" value={formatNok(tradeManager.maxNotionalNok)} />
+                  <RiskStat label="Loss at stop" value={formatOptionalNok(tradeManager.estimatedLossAtStopNok)} muted={!tradeManager.estimatedLossAtStopNok} />
+                  <RiskStat label="Profit target" value={formatOptionalNok(tradeManager.estimatedProfitAtTargetNok)} muted={!tradeManager.estimatedProfitAtTargetNok} />
+                  <RiskStat label="Partial TP" value={tradeManager.partialTakeProfit.price ? formatPrice(tradeManager.partialTakeProfit.price) : "—"} secondary={`${tradeManager.partialTakeProfit.closePercent}% at ${tradeManager.partialTakeProfit.triggerR}R`} />
+                </div>
+                <ul className="mt-4 space-y-1.5 text-xs leading-5 text-slate-400">
+                  {tradeManager.notes.map((note) => <li key={note}>• {note}</li>)}
+                </ul>
               </div>
             ) : null}
 
@@ -390,4 +415,23 @@ function TacticalStat({ label, value, suffix = "" }: { label: string; value: num
       </p>
     </div>
   );
+}
+
+function RiskStat({ label, value, secondary, muted = false }: { label: string; value: string; secondary?: string; muted?: boolean }) {
+  return (
+    <div className="rounded-[20px] border border-white/10 bg-white/[0.03] p-3">
+      <p className="text-[11px] uppercase tracking-[0.14em] text-slate-400">{label}</p>
+      <p className={cn("mt-1.5 text-sm font-semibold text-white", muted && "text-slate-400")}>{value}</p>
+      {secondary ? <p className="mt-1 text-xs text-slate-500">{secondary}</p> : null}
+    </div>
+  );
+}
+
+function formatUnits(value?: number) {
+  if (!value) return "—";
+  return value.toLocaleString("nb-NO");
+}
+
+function formatOptionalNok(value?: number) {
+  return typeof value === "number" ? formatNok(value) : "—";
 }

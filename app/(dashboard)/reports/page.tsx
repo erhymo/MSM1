@@ -77,6 +77,8 @@ function ReportCard({ report }: { report: FirestoreModelReviewReportDocument }) 
         <MetricTable title="Per confidence-bøtte" rows={report.metrics.byConfidenceBucket} />
         <MetricTable title="Per regime" rows={report.metrics.byRegime} />
         <MetricTable title="Per datafriskhet" rows={report.metrics.byFreshnessMode} />
+        <MetricTable title="Per tactical action" rows={report.metrics.byTacticalAction ?? []} />
+        <MetricTable title="Per trade guidance" rows={report.metrics.byTradeGuidance ?? []} />
       </div>
     </Card>
   );

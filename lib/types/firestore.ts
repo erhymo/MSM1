@@ -1,4 +1,4 @@
-import type { AnalysisResult, AssetClass, DataFreshness, FactorContribution, Instrument, PolicyRateSignal, SignalType, SystemStatusItem, TacticalSignal, TradeSetupQuality } from "@/lib/types/analysis";
+import type { AnalysisResult, AssetClass, DataFreshness, FactorContribution, Instrument, PolicyRateSignal, SignalType, SystemStatusItem, TacticalAction, TacticalSignal, TradeManagerGuidance, TradeManagerPlan, TradeSetupQuality } from "@/lib/types/analysis";
 import type { OilAlertDecision, OilAlertDirection, OilAlertRunResult, OilAlertRunTrigger } from "@/lib/alerts/oil-alert-types";
 
 export interface FirestoreInstrumentDocument {
@@ -32,6 +32,7 @@ export interface FirestoreLatestAnalysisDocument {
   nokDisplay?: AnalysisResult["nokDisplay"];
   rateSignal?: PolicyRateSignal;
   tacticalSignal?: TacticalSignal;
+  tradeManagerPlan?: TradeManagerPlan;
   source: string;
   writtenAt: string;
 }
@@ -86,6 +87,10 @@ export interface FirestoreRecommendationAuditOutcome {
   targetHit?: boolean;
   stopHit?: boolean;
   directionalWin?: boolean;
+  tacticalReturnPercent?: number;
+  tacticalMaxFavorablePercent?: number;
+  tacticalMaxAdversePercent?: number;
+  tacticalDirectionalWin?: boolean;
 }
 
 export interface FirestoreRecommendationAuditDocument {
@@ -109,6 +114,11 @@ export interface FirestoreRecommendationAuditDocument {
   explanation: string;
   factorContributions: FactorContribution[];
   tacticalSignal?: TacticalSignal;
+  tacticalAction?: TacticalAction;
+  tacticalScore?: number;
+  tacticalConfidence?: number;
+  tradeManagerPlan?: TradeManagerPlan;
+  tradeGuidance?: TradeManagerGuidance;
   outcomes: FirestoreRecommendationAuditOutcome[];
   evaluationStatus: "pending" | "partial" | "complete";
 }
@@ -137,6 +147,8 @@ export interface FirestoreModelReviewReportDocument {
     byConfidenceBucket: FirestoreModelReviewMetricRow[];
     byRegime: FirestoreModelReviewMetricRow[];
     byFreshnessMode: FirestoreModelReviewMetricRow[];
+    byTacticalAction: FirestoreModelReviewMetricRow[];
+    byTradeGuidance: FirestoreModelReviewMetricRow[];
   };
 }
 
