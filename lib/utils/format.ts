@@ -1,4 +1,4 @@
-import type { AnalysisResult, SignalType } from "@/lib/types/analysis";
+import type { AnalysisResult, SignalType, TacticalAction } from "@/lib/types/analysis";
 
 const nokCurrencyFormatter = new Intl.NumberFormat("nb-NO", {
   style: "currency",
@@ -15,6 +15,16 @@ export const SIGNAL_LABELS: Record<SignalType, string> = {
   SELL: "Sell",
   STRONG_SELL: "Strong Sell",
   NO_TRADE: "No Trade",
+};
+
+export const TACTICAL_LABELS: Record<TacticalAction, string> = {
+  ENTER_LONG: "Enter Long",
+  ENTER_SHORT: "Enter Short",
+  HOLD: "Hold",
+  WAIT: "Wait",
+  TAKE_PROFIT: "Take Profit",
+  EXIT: "Exit",
+  AVOID: "Avoid",
 };
 
 const SIGNAL_SORT_PRIORITY: Record<SignalType, number> = {

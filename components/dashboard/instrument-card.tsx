@@ -2,9 +2,9 @@ import { Activity, ChevronRight, Clock3, ShieldAlert, Target, TrendingUp } from 
 
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
-import type { AnalysisResult } from "@/lib/types/analysis";
+import type { AnalysisResult, TacticalAction } from "@/lib/types/analysis";
 import { cn } from "@/lib/utils/cn";
-import { formatApproxNokPrice, formatPercent, formatPrice, formatRelativeTime, SIGNAL_LABELS } from "@/lib/utils/format";
+import { formatApproxNokPrice, formatPercent, formatPrice, formatRelativeTime, SIGNAL_LABELS, TACTICAL_LABELS } from "@/lib/utils/format";
 
 const signalTone: Record<
   AnalysisResult["signal"],
@@ -51,6 +51,16 @@ const signalTone: Record<
   },
 };
 
+const tacticalTone: Record<TacticalAction, string> = {
+  ENTER_LONG: "border-emerald-300/30 bg-emerald-400/15 text-emerald-50",
+  ENTER_SHORT: "border-red-300/25 bg-red-400/12 text-red-50",
+  HOLD: "border-blue-300/25 bg-blue-400/12 text-blue-50",
+  WAIT: "border-amber-300/25 bg-amber-400/12 text-amber-50",
+  TAKE_PROFIT: "border-cyan-300/25 bg-cyan-400/12 text-cyan-50",
+  EXIT: "border-rose-300/25 bg-rose-400/12 text-rose-50",
+  AVOID: "border-slate-300/20 bg-slate-400/10 text-slate-100",
+};
+
 type InstrumentCardProps = {
   analysis: AnalysisResult;
   onSelect: (analysis: AnalysisResult) => void;
@@ -70,6 +80,7 @@ export function InstrumentCard({ analysis, onSelect }: InstrumentCardProps) {
           ? "bg-amber-400"
           : "bg-slate-400";
   const tone = signalTone[analysis.signal];
+  const tactical = analysis.tacticalSignal;
   const isNoTrade = analysis.signal === "NO_TRADE";
   const entryNok = formatApproxNokPrice(analysis.entry, analysis);
   const stopNok = isNoTrade ? null : formatApproxNokPrice(analysis.stopLoss, analysis);
@@ -88,6 +99,7 @@ export function InstrumentCard({ analysis, onSelect }: InstrumentCardProps) {
             </div>
             <div className="flex flex-col items-end gap-2 text-right">
               <Badge className={cn("bg-black/10", tone.badge)}>{SIGNAL_LABELS[analysis.signal]}</Badge>
+              {tactical ? <Badge className={cn("bg-black/10", tacticalTone[tactical.action])}>Tactical: {TACTICAL_LABELS[tactical.action]}</Badge> : null}
               <span className="text-[11px] uppercase tracking-[0.18em] text-slate-400">
                 {isNoTrade ? "Stand aside" : `Setup ${analysis.setupQuality}`}
               </span>
@@ -116,6 +128,17 @@ export function InstrumentCard({ analysis, onSelect }: InstrumentCardProps) {
                 : `${analysis.marketRegime} regime with ${analysis.setupQuality} setup quality.`}
             </p>
           </div>
+
+          {tactical ? (
+            <div className="mt-4 rounded-3xl border border-white/10 bg-white/[0.03] p-4">
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <p className="text-[11px] uppercase tracking-[0.18em] text-slate-400">Tactical · {tactical.horizon}</p>
+                <span className="text-xs font-semibold text-white">{tactical.score > 0 ? "+" : ""}{tactical.score}</span>
+              </div>
+              <p className="text-sm font-medium text-white">{TACTICAL_LABELS[tactical.action]}</p>
+              <p className="mt-1.5 line-clamp-2 text-xs leading-5 text-slate-300">{tactical.reason}</p>
+            </div>
+          ) : null}
 
           <div className="mt-4 grid grid-cols-2 gap-3 text-sm text-slate-200">
             <Metric label="COT bias" value={analysis.cotBias} icon={Activity} />

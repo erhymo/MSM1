@@ -84,6 +84,7 @@ function toLatestAnalysisDocument(analysis: AnalysisResult, writtenAt: string): 
     factorContributions: analysis.factorContributions,
     ...(analysis.nokDisplay ? { nokDisplay: analysis.nokDisplay } : {}),
     ...(analysis.rateSignal ? { rateSignal: analysis.rateSignal } : {}),
+    ...(analysis.tacticalSignal ? { tacticalSignal: analysis.tacticalSignal } : {}),
     source: firestoreAnalysisConfig.sourceLabel,
     writtenAt,
   };
@@ -124,6 +125,7 @@ function toRecommendationAuditDocument(
     aiSummary: analysis.aiSummary,
     explanation: analysis.explanation,
     factorContributions: analysis.factorContributions,
+    ...(analysis.tacticalSignal ? { tacticalSignal: analysis.tacticalSignal } : {}),
     outcomes: modelReviewConfig.outcomeWindowsHours.map((horizonHours) => ({
       horizonHours,
       targetTime: new Date(new Date(writtenAt).getTime() + horizonHours * 60 * 60 * 1000).toISOString(),
@@ -212,6 +214,7 @@ function toAnalysisResult(doc: FirestoreLatestAnalysisDocument, history: Analysi
     factorContributions: doc.factorContributions,
     nokDisplay: doc.nokDisplay,
     rateSignal: doc.rateSignal,
+    tacticalSignal: doc.tacticalSignal,
     priceHistory: history.priceHistory,
     confidenceHistory: history.confidenceHistory,
     cotHistory: history.cotHistory,

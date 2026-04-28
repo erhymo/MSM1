@@ -1,4 +1,5 @@
 import { confidenceConfig, factorWeights, signalThresholds, tradePlanConfig } from "@/lib/config/analysis";
+import { computeTacticalSignal } from "@/lib/analysis/tactical";
 import { getPolicyRate, getTwoYearYield, getTwoYearYieldChange5d, policyRateConfig } from "@/lib/config/policy-rates";
 import type {
   AnalysisResult,
@@ -276,6 +277,7 @@ export function computeAnalysis(price: PriceSnapshot, cot: COTSnapshot, sentimen
   const confidence = clamp(round(Math.abs(score) * 0.44 + alignment * 34 + dataQuality - regimePenalty - lowConvictionPenalty + convictionBonus), 20, 95);
   const signal = getSignal(score, confidence, marketRegime);
   const setupQuality = getSetupQuality(signal, score, confidence);
+  const tacticalSignal = computeTacticalSignal({ price, volatility, swingSignal: signal, swingScore: score, swingConfidence: confidence, marketRegime });
   const direction = Math.sign(score) || 1;
   const entry = price.currentPrice;
   const stopOffset = price.atr14 * tradePlanConfig.stopAtrMultiplier;
@@ -305,6 +307,7 @@ export function computeAnalysis(price: PriceSnapshot, cot: COTSnapshot, sentimen
     riskReward,
     factorContributions,
     ...(rateSignal ? { rateSignal } : {}),
+    tacticalSignal,
     priceHistory: price.priceHistory,
     confidenceHistory: buildConfidenceHistory(confidence, momentumScore),
     cotHistory: cot.history,

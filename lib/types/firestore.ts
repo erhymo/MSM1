@@ -1,4 +1,4 @@
-import type { AnalysisResult, AssetClass, DataFreshness, FactorContribution, Instrument, PolicyRateSignal, SignalType, SystemStatusItem, TradeSetupQuality } from "@/lib/types/analysis";
+import type { AnalysisResult, AssetClass, DataFreshness, FactorContribution, Instrument, PolicyRateSignal, SignalType, SystemStatusItem, TacticalSignal, TradeSetupQuality } from "@/lib/types/analysis";
 import type { OilAlertDecision, OilAlertDirection, OilAlertRunResult, OilAlertRunTrigger } from "@/lib/alerts/oil-alert-types";
 
 export interface FirestoreInstrumentDocument {
@@ -31,6 +31,7 @@ export interface FirestoreLatestAnalysisDocument {
   factorContributions: FactorContribution[];
   nokDisplay?: AnalysisResult["nokDisplay"];
   rateSignal?: PolicyRateSignal;
+  tacticalSignal?: TacticalSignal;
   source: string;
   writtenAt: string;
 }
@@ -107,6 +108,7 @@ export interface FirestoreRecommendationAuditDocument {
   aiSummary: string;
   explanation: string;
   factorContributions: FactorContribution[];
+  tacticalSignal?: TacticalSignal;
   outcomes: FirestoreRecommendationAuditOutcome[];
   evaluationStatus: "pending" | "partial" | "complete";
 }

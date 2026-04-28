@@ -129,6 +129,23 @@ export interface PolicyRateSignal {
   updatedAt: string;
 }
 
+export type TacticalAction = "ENTER_LONG" | "ENTER_SHORT" | "HOLD" | "WAIT" | "TAKE_PROFIT" | "EXIT" | "AVOID";
+
+export interface TacticalSignal {
+  action: TacticalAction;
+  score: number;
+  confidence: number;
+  reason: string;
+  horizon: "1D-3D";
+  components: {
+    momentum4h: number;
+    dailyAlignment: number;
+    stretch: number;
+    volatility: number;
+    swingAlignment: number;
+  };
+}
+
 export interface TimeframeIndicatorSnapshot {
   timeframe: Timeframe;
   bias: number;
@@ -203,6 +220,7 @@ export interface AnalysisResult {
   factorContributions: FactorContribution[];
   nokDisplay?: NokDisplayContext;
   rateSignal?: PolicyRateSignal;
+  tacticalSignal?: TacticalSignal;
   priceHistory: HistoryPoint[];
   confidenceHistory: HistoryPoint[];
   cotHistory?: HistoryPoint[];

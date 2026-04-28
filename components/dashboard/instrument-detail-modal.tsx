@@ -17,10 +17,10 @@ import { useEffect, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Modal } from "@/components/ui/modal";
-import type { AnalysisResult } from "@/lib/types/analysis";
+import type { AnalysisResult, TacticalAction } from "@/lib/types/analysis";
 import type { AnalysisHistorySeries } from "@/lib/types/firestore";
 import { cn } from "@/lib/utils/cn";
-import { formatApproxNokPrice, formatPercent, formatPrice, formatRelativeTime, SIGNAL_LABELS } from "@/lib/utils/format";
+import { formatApproxNokPrice, formatPercent, formatPrice, formatRelativeTime, SIGNAL_LABELS, TACTICAL_LABELS } from "@/lib/utils/format";
 
 type InstrumentDetailModalProps = {
   analysis: AnalysisResult | null;
@@ -44,6 +44,16 @@ const signalTone: Record<AnalysisResult["signal"], string> = {
   SELL: "border-rose-300/25 bg-rose-400/12 text-rose-50",
   STRONG_SELL: "border-red-300/25 bg-red-400/12 text-red-50",
   NO_TRADE: "border-slate-300/20 bg-slate-400/10 text-slate-100",
+};
+
+const tacticalTone: Record<TacticalAction, string> = {
+  ENTER_LONG: "border-emerald-300/30 bg-emerald-400/15 text-emerald-50",
+  ENTER_SHORT: "border-red-300/25 bg-red-400/12 text-red-50",
+  HOLD: "border-blue-300/25 bg-blue-400/12 text-blue-50",
+  WAIT: "border-amber-300/25 bg-amber-400/12 text-amber-50",
+  TAKE_PROFIT: "border-cyan-300/25 bg-cyan-400/12 text-cyan-50",
+  EXIT: "border-rose-300/25 bg-rose-400/12 text-rose-50",
+  AVOID: "border-slate-300/20 bg-slate-400/10 text-slate-100",
 };
 
 export function InstrumentDetailModal({ analysis, open, onClose }: InstrumentDetailModalProps) {
@@ -98,6 +108,7 @@ export function InstrumentDetailModal({ analysis, open, onClose }: InstrumentDet
   const hasSentimentHistory = Boolean(history.sentimentHistory?.length);
   const hasCotHistory = Boolean(history.cotHistory?.length);
   const freshnessLabel = analysis.freshness.mode === "fallback" ? "Fallback active" : "Live provider data";
+  const tactical = analysis.tacticalSignal;
   const isNoTrade = analysis.signal === "NO_TRADE";
   const entryNok = formatApproxNokPrice(analysis.entry, analysis);
   const stopNok = isNoTrade ? null : formatApproxNokPrice(analysis.stopLoss, analysis);
@@ -118,6 +129,7 @@ export function InstrumentDetailModal({ analysis, open, onClose }: InstrumentDet
           <Card className="overflow-hidden p-6">
             <div className="mb-4 flex flex-wrap items-center gap-3">
               <Badge className={cn("bg-black/10", signalTone[analysis.signal])}>{SIGNAL_LABELS[analysis.signal]}</Badge>
+              {tactical ? <Badge className={cn("bg-black/10", tacticalTone[tactical.action])}>Tactical: {TACTICAL_LABELS[tactical.action]}</Badge> : null}
               <Badge className="bg-white/5 text-slate-200">Setup {analysis.setupQuality}</Badge>
               <Badge className="bg-white/5 text-slate-200">{analysis.marketRegime}</Badge>
               <Badge className={analysis.freshness.mode === "fallback" ? "bg-amber-500/10 text-amber-100" : "bg-emerald-500/10 text-emerald-100"}>
@@ -156,6 +168,25 @@ export function InstrumentDetailModal({ analysis, open, onClose }: InstrumentDet
             {isNoTrade ? (
               <div className="rounded-[26px] border border-amber-400/20 bg-amber-500/10 p-4 text-sm leading-6 text-amber-100">
                 No Trade is active because the current setup does not yet have enough conviction or alignment to justify a plan.
+              </div>
+            ) : null}
+
+            {tactical ? (
+              <div className="rounded-[26px] border border-white/10 bg-white/[0.03] p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-xs uppercase tracking-[0.16em] text-slate-400">Tactical · {tactical.horizon}</p>
+                  <Badge className={cn("bg-black/10", tacticalTone[tactical.action])}>{TACTICAL_LABELS[tactical.action]}</Badge>
+                </div>
+                <p className="mt-3 text-sm leading-6 text-slate-200">{tactical.reason}</p>
+                <div className="mt-4 grid gap-2 sm:grid-cols-3">
+                  <TacticalStat label="Score" value={tactical.score} />
+                  <TacticalStat label="Confidence" value={tactical.confidence} suffix="%" />
+                  <TacticalStat label="4H momentum" value={tactical.components.momentum4h} />
+                  <TacticalStat label="Daily" value={tactical.components.dailyAlignment} />
+                  <TacticalStat label="Stretch" value={tactical.components.stretch} />
+                  <TacticalStat label="Volatility" value={tactical.components.volatility} />
+                  <TacticalStat label="Swing" value={tactical.components.swingAlignment} />
+                </div>
               </div>
             ) : null}
 
@@ -346,6 +377,17 @@ function InfoTile({ label, value, icon: Icon }: { label: string; value: string; 
         <span>{label}</span>
       </div>
       <p className="mt-2 text-sm font-medium text-slate-100">{value}</p>
+    </div>
+  );
+}
+
+function TacticalStat({ label, value, suffix = "" }: { label: string; value: number; suffix?: string }) {
+  return (
+    <div className="rounded-[20px] border border-white/10 bg-black/10 p-3">
+      <p className="text-[11px] uppercase tracking-[0.14em] text-slate-400">{label}</p>
+      <p className={cn("mt-1.5 text-sm font-semibold", value >= 0 ? "text-cyan-100" : "text-rose-100")}>
+        {value > 0 ? "+" : ""}{value}{suffix}
+      </p>
     </div>
   );
 }
