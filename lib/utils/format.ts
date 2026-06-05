@@ -37,6 +37,16 @@ const SIGNAL_SORT_PRIORITY: Record<SignalType, number> = {
   NO_TRADE: 6,
 };
 
+const TACTICAL_SORT_PRIORITY: Record<TacticalAction, number> = {
+  ENTER_LONG: 0,
+  ENTER_SHORT: 0,
+  HOLD: 1,
+  WAIT: 2,
+  TAKE_PROFIT: 3,
+  EXIT: 4,
+  AVOID: 5,
+};
+
 export function formatPercent(value: number, digits = 0) {
   return `${value.toFixed(digits)}%`;
 }
@@ -75,6 +85,12 @@ export function formatRelativeTime(isoDate: string) {
 }
 
 export function compareAnalysisResults(a: AnalysisResult, b: AnalysisResult) {
+  const tacticalPriority = (a.tacticalSignal ? TACTICAL_SORT_PRIORITY[a.tacticalSignal.action] : 6) - (b.tacticalSignal ? TACTICAL_SORT_PRIORITY[b.tacticalSignal.action] : 6);
+  if (tacticalPriority !== 0) return tacticalPriority;
+
+  const tacticalConfidenceDiff = (b.tacticalSignal?.confidence ?? 0) - (a.tacticalSignal?.confidence ?? 0);
+  if (tacticalConfidenceDiff !== 0) return tacticalConfidenceDiff;
+
   const signalPriority = SIGNAL_SORT_PRIORITY[a.signal] - SIGNAL_SORT_PRIORITY[b.signal];
   if (signalPriority !== 0) return signalPriority;
 

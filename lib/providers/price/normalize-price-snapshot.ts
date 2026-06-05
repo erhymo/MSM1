@@ -14,6 +14,7 @@ type NormalizePriceSnapshotInput = {
   instrument: Instrument;
   source: string;
   bars: RemotePriceBar[];
+  intradayBars?: RemotePriceBar[];
   updatedAt: string;
   freshnessMode?: PriceSnapshot["freshness"]["mode"];
   freshnessNote?: string;
@@ -106,10 +107,14 @@ function buildTimeframeIndicatorSnapshot(timeframe: Timeframe, closes: number[],
 
 export function normalizePriceSnapshot(input: NormalizePriceSnapshotInput): PriceSnapshot {
   const bars = [...input.bars].sort((left, right) => left.timestamp.localeCompare(right.timestamp));
+  const intradayBars = [...(input.intradayBars ?? [])].sort((left, right) => left.timestamp.localeCompare(right.timestamp));
   const closes = bars.map((bar) => bar.close);
-  const currentPrice = round(closes.at(-1) ?? 0, 4);
+  const intradayCloses = intradayBars.map((bar) => bar.close);
+  const currentPrice = round(intradayCloses.at(-1) ?? closes.at(-1) ?? 0, 4);
   const atr14 = round(getAtr14(bars), 4);
   const atrPercent = round(currentPrice ? (atr14 / currentPrice) * 100 : 0, 2);
+  const tacticalCloses = intradayCloses.length >= 8 ? intradayCloses : closes;
+  const tacticalLookback = intradayCloses.length >= 8 ? 4 : 3;
 
   return {
     ticker: input.instrument.ticker,
@@ -119,7 +124,7 @@ export function normalizePriceSnapshot(input: NormalizePriceSnapshotInput): Pric
     atrPercent,
     weeklyTrend: buildTimeframeIndicatorSnapshot("1W", closes, 20),
     dailyTrend: buildTimeframeIndicatorSnapshot("1D", closes, 5),
-    fourHourMomentum: buildTimeframeIndicatorSnapshot("4H", closes, 3),
+    fourHourMomentum: buildTimeframeIndicatorSnapshot("4H", tacticalCloses, tacticalLookback),
     priceHistory: bars.slice(-priceProviderConfig.historyPoints).map((bar) => ({
       label: toHistoryLabel(bar.timestamp),
       value: round(bar.close, 4),

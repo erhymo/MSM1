@@ -99,8 +99,8 @@ export function InstrumentCard({ analysis, onSelect }: InstrumentCardProps) {
               <p className="mt-2 text-2xl font-semibold tracking-tight text-white">{analysis.instrument.ticker}</p>
             </div>
             <div className="flex flex-col items-end gap-2 text-right">
-              <Badge className={cn("bg-black/10", tone.badge)}>{SIGNAL_LABELS[analysis.signal]}</Badge>
-              {tactical ? <Badge className={cn("bg-black/10", tacticalTone[tactical.action])}>Tactical: {TACTICAL_LABELS[tactical.action]}</Badge> : null}
+              <Badge className={cn("bg-black/10", tone.badge)}>Swing: {SIGNAL_LABELS[analysis.signal]}</Badge>
+              {tactical ? <Badge className={cn("bg-black/10", tacticalTone[tactical.action])}>Action: {TACTICAL_LABELS[tactical.action]}</Badge> : null}
               <span className="text-[11px] uppercase tracking-[0.18em] text-slate-400">
                 {isNoTrade ? "Stand aside" : `Setup ${analysis.setupQuality}`}
               </span>

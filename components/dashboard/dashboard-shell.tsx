@@ -2,7 +2,7 @@
 
 import { Activity, BellDot, FileText, LogOut, ShieldCheck } from "lucide-react";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { InstrumentDetailModal } from "@/components/dashboard/instrument-detail-modal";
 import { InstrumentGrid } from "@/components/dashboard/instrument-grid";
@@ -10,8 +10,9 @@ import { OilAlertSection } from "@/components/dashboard/oil-alert-section";
 import { SystemStatus } from "@/components/dashboard/system-status";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/hooks/use-auth";
+import { getCurrencyConcentration, getPositionRisk, readStoredPositions, type StoredPositions } from "@/lib/client/position-risk";
 import type { AnalysisResult, OilAlertDashboardSummary, SystemStatusItem } from "@/lib/types/analysis";
-import { compareAnalysisResults } from "@/lib/utils/format";
+import { compareAnalysisResults, formatNok } from "@/lib/utils/format";
 
 type DashboardShellProps = {
   analyses: AnalysisResult[];
@@ -21,8 +22,13 @@ type DashboardShellProps = {
 
 export function DashboardShell({ analyses, statusItems, oilAlert }: DashboardShellProps) {
   const [selected, setSelected] = useState<AnalysisResult | null>(null);
+  const [positions, setPositions] = useState<StoredPositions>({});
   const { user, signOut, loading, initializing } = useAuth();
   const rankedAnalyses = useMemo(() => [...analyses].sort(compareAnalysisResults), [analyses]);
+
+  useEffect(() => {
+    setPositions(readStoredPositions());
+  }, []);
 
   const fallbackCount = useMemo(
     () => rankedAnalyses.filter((item) => item.freshness.mode === "fallback").length,
@@ -31,9 +37,21 @@ export function DashboardShell({ analyses, statusItems, oilAlert }: DashboardShe
 
   const liveCount = rankedAnalyses.length - fallbackCount;
   const actionableCount = useMemo(
-    () => rankedAnalyses.filter((item) => item.signal === "BUY" || item.signal === "STRONG_BUY").length,
+    () => rankedAnalyses.filter((item) => item.tacticalSignal?.action === "ENTER_LONG" || item.tacticalSignal?.action === "ENTER_SHORT").length,
     [rankedAnalyses],
   );
+  const positionRiskSummary = useMemo(() => {
+    const risks = rankedAnalyses.map((analysis) => getPositionRisk(analysis, positions[analysis.instrument.ticker])).filter((risk) => risk.isOpen);
+    const totalPnlNok = risks.reduce((sum, risk) => sum + (risk.pnlNok ?? 0), 0);
+    return {
+      risks,
+      openCount: risks.length,
+      warningCount: risks.filter((risk) => risk.severity === "warning").length,
+      dangerCount: risks.filter((risk) => risk.severity === "danger").length,
+      totalPnlNok,
+      concentration: getCurrencyConcentration(rankedAnalyses, positions),
+    };
+  }, [positions, rankedAnalyses]);
 
   return (
     <main className="min-h-screen px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
@@ -43,18 +61,18 @@ export function DashboardShell({ analyses, statusItems, oilAlert }: DashboardShe
             <div className="mb-4 flex flex-wrap items-center gap-3">
               <Badge className="bg-blue-500/10 text-blue-100">MSM1</Badge>
               <Badge className="bg-emerald-500/10 text-emerald-100">{rankedAnalyses.length} instruments</Badge>
-              <Badge className="bg-cyan-500/10 text-cyan-100">{actionableCount} actionable buys</Badge>
+              <Badge className="bg-cyan-500/10 text-cyan-100">{actionableCount} tactical entries</Badge>
               <Badge className={fallbackCount > 0 ? "bg-amber-500/10 text-amber-100" : "bg-emerald-500/10 text-emerald-100"}>
                 {fallbackCount > 0 ? `${fallbackCount} fallback` : "All feeds live"}
               </Badge>
             </div>
             <h1 className="text-3xl font-semibold tracking-tight text-white sm:text-[2.1rem]">Trading dashboard</h1>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-muted">
-              Ranked 1–3 week decision support with provider-backed pricing, weekly COT bias, contrarian retail sentiment, Firestore fallback and cleaner trade-plan detail.
+              Action-first decision support: tactical entries and risk management lead, while swing bias remains the broader 1–3 week backdrop.
             </p>
 
             <div className="mt-5 grid gap-3 sm:grid-cols-3">
-              <HeaderStat label="Actionable" value={String(actionableCount)} detail="Strong buy and buy setups lead the stack." />
+              <HeaderStat label="Action now" value={String(actionableCount)} detail="Tactical ENTER setups lead the stack before slower swing watchlist ideas." />
               <HeaderStat label="Live coverage" value={String(liveCount)} detail="Primary providers delivered fresh snapshots." />
               <HeaderStat
                 label="Fallback"
@@ -70,7 +88,7 @@ export function DashboardShell({ analyses, statusItems, oilAlert }: DashboardShe
               <span>{user?.email ?? "Authenticated workspace"}</span>
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
-              <HeaderStat label="Ranking" value="Buys first" detail="Then hold, wait, no trade and bearish signals." compact />
+              <HeaderStat label="Ranking" value="Action first" detail="ENTER first, then HOLD, WAIT, TAKE PROFIT, EXIT and AVOID." compact />
               <HeaderStat
                 label="Cadence"
                 value="3h / weekly"
@@ -105,12 +123,32 @@ export function DashboardShell({ analyses, statusItems, oilAlert }: DashboardShe
           </div>
         </header>
 
+        {positionRiskSummary.openCount > 0 ? (
+          <section className="rounded-[28px] border border-amber-300/20 bg-amber-500/10 p-5">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <p className="text-[11px] uppercase tracking-[0.2em] text-amber-100/80">Position Risk Guard</p>
+                <h2 className="mt-2 text-xl font-semibold text-white">
+                  {positionRiskSummary.dangerCount > 0 ? "Åpne posisjoner trenger handling" : "Åpne posisjoner overvåkes"}
+                </h2>
+                <p className="mt-2 text-sm leading-6 text-amber-50/85">
+                  {positionRiskSummary.openCount} registrerte posisjoner · {positionRiskSummary.dangerCount} danger · {positionRiskSummary.warningCount} warning · estimert P/L {formatNok(positionRiskSummary.totalPnlNok)}
+                  {positionRiskSummary.concentration ? ` · største valutaeksponering: ${positionRiskSummary.concentration[0]} (${positionRiskSummary.concentration[1] > 0 ? "+" : ""}${positionRiskSummary.concentration[1]})` : ""}
+                </p>
+              </div>
+              <Badge className={positionRiskSummary.dangerCount > 0 ? "bg-rose-500/20 text-rose-50" : "bg-amber-500/20 text-amber-50"}>
+                {positionRiskSummary.dangerCount > 0 ? "Risk alert" : "Watch positions"}
+              </Badge>
+            </div>
+          </section>
+        ) : null}
+
         <div className="grid gap-6 xl:grid-cols-[1.7fr_0.9fr]">
           <section className="space-y-4">
             <div className="flex items-center justify-between gap-4">
               <div>
                 <h2 className="text-lg font-semibold text-white">Ranked instruments</h2>
-                <p className="text-sm leading-6 text-muted">Best buy opportunities appear first, followed by the rest of the signal stack.</p>
+                <p className="text-sm leading-6 text-muted">Best tactical actions appear first; swing Buy is no longer enough by itself to top the list.</p>
               </div>
               <div className="hidden items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-slate-300 lg:flex">
                 <Activity className="h-3.5 w-3.5 text-cyan-300" />
@@ -127,7 +165,7 @@ export function DashboardShell({ analyses, statusItems, oilAlert }: DashboardShe
         </div>
       </div>
 
-      <InstrumentDetailModal analysis={selected} open={Boolean(selected)} onClose={() => setSelected(null)} />
+      <InstrumentDetailModal analysis={selected} open={Boolean(selected)} onClose={() => { setSelected(null); setPositions(readStoredPositions()); }} />
     </main>
   );
 }

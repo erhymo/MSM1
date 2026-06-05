@@ -12,6 +12,8 @@ export const priceProviderConfig = {
   exchangeRateApiTimeoutMs: Math.max(2_000, Number(process.env.EXCHANGE_RATE_API_TIMEOUT_MS ?? 12_000)),
   range: "3mo",
   interval: "1d",
+  intradayRange: "5d",
+  intradayInterval: "1h",
   historyPoints: 16,
   exchangeRateFallbackHistoryPoints: 24,
 } as const;

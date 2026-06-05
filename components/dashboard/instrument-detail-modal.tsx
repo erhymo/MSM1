@@ -17,6 +17,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Modal } from "@/components/ui/modal";
+import { getPositionRisk, readStoredPositions, writeStoredPositions, type ManualPosition, type StoredPositions } from "@/lib/client/position-risk";
 import type { AnalysisResult, TacticalAction } from "@/lib/types/analysis";
 import type { AnalysisHistorySeries } from "@/lib/types/firestore";
 import { cn } from "@/lib/utils/cn";
@@ -27,8 +28,6 @@ type InstrumentDetailModalProps = {
   open: boolean;
   onClose: () => void;
 };
-
-const openPositionsStorageKey = "msm1-open-positions-v1";
 
 const chartGridColor = "#22304d";
 const chartAxisColor = "#7c8aa5";
@@ -63,25 +62,6 @@ type PositionAdvice = {
   detail: string;
   tone: string;
 };
-
-function readStoredOpenPositions() {
-  if (typeof window === "undefined") return {};
-
-  try {
-    const raw = window.localStorage.getItem(openPositionsStorageKey);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw) as unknown;
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
-    return Object.fromEntries(Object.entries(parsed).filter(([, value]) => value === true)) as Record<string, boolean>;
-  } catch {
-    return {};
-  }
-}
-
-function writeStoredOpenPositions(openPositions: Record<string, boolean>) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(openPositionsStorageKey, JSON.stringify(openPositions));
-}
 
 function getPositionAwareAdvice(analysis: AnalysisResult, hasOpenPosition: boolean): PositionAdvice {
   const tacticalAction = analysis.tacticalSignal?.action;
@@ -162,10 +142,10 @@ function getPositionAwareAdvice(analysis: AnalysisResult, hasOpenPosition: boole
 export function InstrumentDetailModal({ analysis, open, onClose }: InstrumentDetailModalProps) {
   const [remoteHistory, setRemoteHistory] = useState<AnalysisHistorySeries | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
-  const [openPositions, setOpenPositions] = useState<Record<string, boolean>>({});
+  const [positions, setPositions] = useState<StoredPositions>({});
 
   useEffect(() => {
-    setOpenPositions(readStoredOpenPositions());
+    setPositions(readStoredPositions());
   }, []);
 
   useEffect(() => {
@@ -212,18 +192,28 @@ export function InstrumentDetailModal({ analysis, open, onClose }: InstrumentDet
   );
 
   const ticker = analysis?.instrument.ticker ?? null;
-  const hasOpenPosition = ticker ? Boolean(openPositions[ticker]) : false;
+  const position = ticker ? positions[ticker] : undefined;
+  const hasOpenPosition = Boolean(position?.isOpen);
 
-  function updateOpenPosition(nextValue: boolean) {
+  function updatePosition(update: Partial<ManualPosition> | null) {
     if (!ticker) return;
 
-    setOpenPositions((current) => {
+    setPositions((current) => {
       const next = { ...current };
-      if (nextValue) next[ticker] = true;
-      else delete next[ticker];
-      writeStoredOpenPositions(next);
+      if (!update || update.isOpen === false) {
+        delete next[ticker];
+      } else {
+        const existing = next[ticker];
+        next[ticker] = { ...existing, ...update, side: update.side ?? existing?.side ?? "BUY", isOpen: true, updatedAt: new Date().toISOString() };
+      }
+      writeStoredPositions(next);
       return next;
     });
+  }
+
+  function updatePositionNumber(field: "entryPrice" | "units" | "stopLoss" | "takeProfit", value: string) {
+    const normalized = value.replace(",", ".").trim();
+    updatePosition({ [field]: normalized ? Number(normalized) : undefined });
   }
 
   if (!analysis || !history) return null;
@@ -235,6 +225,7 @@ export function InstrumentDetailModal({ analysis, open, onClose }: InstrumentDet
   const tradeManager = analysis.tradeManagerPlan;
   const isNoTrade = analysis.signal === "NO_TRADE";
   const positionAdvice = getPositionAwareAdvice(analysis, hasOpenPosition);
+  const positionRisk = getPositionRisk(analysis, position);
   const entryNok = formatApproxNokPrice(analysis.entry, analysis);
   const stopNok = isNoTrade ? null : formatApproxNokPrice(analysis.stopLoss, analysis);
   const targetNok = isNoTrade ? null : formatApproxNokPrice(analysis.target, analysis);
@@ -253,8 +244,8 @@ export function InstrumentDetailModal({ analysis, open, onClose }: InstrumentDet
         <section className="grid gap-4 xl:grid-cols-[1.45fr_1fr]">
           <Card className="overflow-hidden p-6">
             <div className="mb-4 flex flex-wrap items-center gap-3">
-              <Badge className={cn("bg-black/10", signalTone[analysis.signal])}>{SIGNAL_LABELS[analysis.signal]}</Badge>
-              {tactical ? <Badge className={cn("bg-black/10", tacticalTone[tactical.action])}>Tactical: {TACTICAL_LABELS[tactical.action]}</Badge> : null}
+              <Badge className={cn("bg-black/10", signalTone[analysis.signal])}>Swing: {SIGNAL_LABELS[analysis.signal]}</Badge>
+              {tactical ? <Badge className={cn("bg-black/10", tacticalTone[tactical.action])}>Action: {TACTICAL_LABELS[tactical.action]}</Badge> : null}
               <Badge className="bg-white/5 text-slate-200">Setup {analysis.setupQuality}</Badge>
               <Badge className="bg-white/5 text-slate-200">{analysis.marketRegime}</Badge>
               <Badge className={analysis.freshness.mode === "fallback" ? "bg-amber-500/10 text-amber-100" : "bg-emerald-500/10 text-emerald-100"}>
@@ -301,7 +292,7 @@ export function InstrumentDetailModal({ analysis, open, onClose }: InstrumentDet
                 <input
                   type="checkbox"
                   checked={hasOpenPosition}
-                  onChange={(event) => updateOpenPosition(event.target.checked)}
+                  onChange={(event) => updatePosition(event.target.checked ? { isOpen: true } : null)}
                   className="mt-1 h-4 w-4 rounded border-white/20 bg-black/30 accent-cyan-400"
                 />
                 <span>
@@ -311,6 +302,49 @@ export function InstrumentDetailModal({ analysis, open, onClose }: InstrumentDet
                   </span>
                 </span>
               </label>
+
+              {hasOpenPosition ? (
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-2xl border border-white/10 bg-black/15 p-3">
+                    <p className="mb-2 text-[11px] uppercase tracking-[0.16em] text-cyan-100/70">Side</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      {(["BUY", "SELL"] as const).map((side) => (
+                        <button
+                          key={side}
+                          type="button"
+                          onClick={() => updatePosition({ side })}
+                          className={cn(
+                            "rounded-xl border px-3 py-2 text-xs font-semibold transition",
+                            (position?.side ?? "BUY") === side ? "border-cyan-300/40 bg-cyan-300/20 text-cyan-50" : "border-white/10 bg-black/20 text-slate-300 hover:bg-white/5",
+                          )}
+                        >
+                          {side === "BUY" ? "Kjøp" : "Salg"}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <PositionInput label="Entry" value={position?.entryPrice} placeholder={formatPrice(analysis.entry)} onChange={(value) => updatePositionNumber("entryPrice", value)} />
+                  <PositionInput label="Units" value={position?.units} placeholder="10000" onChange={(value) => updatePositionNumber("units", value)} />
+                  <PositionInput label="Stop loss" value={position?.stopLoss} placeholder={formatPrice(analysis.stopLoss)} onChange={(value) => updatePositionNumber("stopLoss", value)} />
+                  <PositionInput label="Take profit" value={position?.takeProfit} placeholder={formatPrice(analysis.target)} onChange={(value) => updatePositionNumber("takeProfit", value)} />
+                </div>
+              ) : null}
+
+              {hasOpenPosition ? (
+                <div className={cn("mt-4 rounded-2xl border p-3", getRiskTone(positionRisk.severity))}>
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-xs uppercase tracking-[0.16em] text-white/70">Risk Guard</p>
+                    <Badge className="bg-black/10 text-white">{positionRisk.severity.toUpperCase()}</Badge>
+                  </div>
+                  <p className="mt-2 text-base font-semibold text-white">{positionRisk.title}</p>
+                  <p className="mt-1.5 text-sm leading-6 text-white/80">{positionRisk.detail}</p>
+                  <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                    <RiskStat label="P/L" value={typeof positionRisk.pnlNok === "number" ? formatNok(positionRisk.pnlNok) : "—"} muted={typeof positionRisk.pnlNok !== "number"} />
+                    <RiskStat label="Account" value={typeof positionRisk.pnlPercentOfAccount === "number" ? formatPercent(positionRisk.pnlPercentOfAccount, 1) : "—"} muted={typeof positionRisk.pnlPercentOfAccount !== "number"} />
+                    <RiskStat label="R" value={typeof positionRisk.rMultiple === "number" ? `${positionRisk.rMultiple.toFixed(2)}R` : "—"} muted={typeof positionRisk.rMultiple !== "number"} />
+                  </div>
+                </div>
+              ) : null}
 
               <div className={cn("mt-4 rounded-2xl border p-3", positionAdvice.tone)}>
                 <div className="flex items-center justify-between gap-3">
@@ -575,6 +609,28 @@ function RiskStat({ label, value, secondary, muted = false }: { label: string; v
       {secondary ? <p className="mt-1 text-xs text-slate-500">{secondary}</p> : null}
     </div>
   );
+}
+
+function PositionInput({ label, value, placeholder, onChange }: { label: string; value?: number; placeholder?: string; onChange: (value: string) => void }) {
+  return (
+    <label className="rounded-2xl border border-white/10 bg-black/15 p-3">
+      <span className="text-[11px] uppercase tracking-[0.16em] text-cyan-100/70">{label}</span>
+      <input
+        type="number"
+        inputMode="decimal"
+        value={value ?? ""}
+        placeholder={placeholder}
+        onChange={(event) => onChange(event.target.value)}
+        className="mt-2 w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/50"
+      />
+    </label>
+  );
+}
+
+function getRiskTone(severity: "ok" | "warning" | "danger") {
+  if (severity === "danger") return "border-rose-300/30 bg-rose-500/15";
+  if (severity === "warning") return "border-amber-300/30 bg-amber-500/15";
+  return "border-emerald-300/25 bg-emerald-500/12";
 }
 
 function formatUnits(value?: number) {

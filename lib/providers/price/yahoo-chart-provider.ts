@@ -29,6 +29,11 @@ type YahooChartResponse = {
   };
 };
 
+type YahooBarsResult = {
+  bars: RemotePriceBar[];
+  updatedAt: string;
+};
+
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
@@ -61,56 +66,69 @@ function toBars(result: YahooChartResult) {
   }, []);
 }
 
+async function fetchYahooBars(remoteSymbol: string, interval: string, range: string): Promise<YahooBarsResult> {
+  const url = new URL(`${priceProviderConfig.baseUrl}/${encodeURIComponent(remoteSymbol)}`);
+  url.searchParams.set("interval", interval);
+  url.searchParams.set("range", range);
+
+  const response = await fetch(url.toString(), {
+    method: "GET",
+    headers: {
+      Accept: "application/json",
+      "User-Agent": priceProviderConfig.userAgent,
+    },
+    cache: "no-store",
+    signal: AbortSignal.timeout(priceProviderConfig.timeoutMs),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Yahoo chart request failed with status ${response.status}`);
+  }
+
+  const payload = (await response.json()) as YahooChartResponse;
+  const description = payload.chart?.error?.description;
+
+  if (description) {
+    throw new Error(description);
+  }
+
+  const result = payload.chart?.result?.[0];
+  if (!result) {
+    throw new Error(`No Yahoo chart result returned for ${remoteSymbol}`);
+  }
+
+  const bars = toBars(result);
+  if (bars.length < 8) {
+    throw new Error(`Insufficient Yahoo chart history returned for ${remoteSymbol}`);
+  }
+
+  const updatedAt =
+    typeof result.meta?.regularMarketTime === "number"
+      ? new Date(result.meta.regularMarketTime * 1000).toISOString()
+      : bars.at(-1)?.timestamp ?? new Date().toISOString();
+
+  return { bars, updatedAt };
+}
+
 export const yahooChartPriceProvider: PriceDataProvider = {
   async getSnapshot(instrument: Instrument) {
     const { remoteSymbol } = getPriceProviderSymbol(instrument);
-    const url = new URL(`${priceProviderConfig.baseUrl}/${encodeURIComponent(remoteSymbol)}`);
-    url.searchParams.set("interval", priceProviderConfig.interval);
-    url.searchParams.set("range", priceProviderConfig.range);
-
-    const response = await fetch(url.toString(), {
-      method: "GET",
-      headers: {
-        Accept: "application/json",
-        "User-Agent": priceProviderConfig.userAgent,
-      },
-      cache: "no-store",
-      signal: AbortSignal.timeout(priceProviderConfig.timeoutMs),
-    });
-
-    if (!response.ok) {
-      throw new Error(`Yahoo chart request failed with status ${response.status}`);
-    }
-
-    const payload = (await response.json()) as YahooChartResponse;
-    const description = payload.chart?.error?.description;
-
-    if (description) {
-      throw new Error(description);
-    }
-
-    const result = payload.chart?.result?.[0];
-    if (!result) {
-      throw new Error(`No Yahoo chart result returned for ${instrument.ticker}`);
-    }
-
-    const bars = toBars(result);
-    if (bars.length < 20) {
+    const daily = await fetchYahooBars(remoteSymbol, priceProviderConfig.interval, priceProviderConfig.range);
+    if (daily.bars.length < 20) {
       throw new Error(`Insufficient Yahoo chart history returned for ${instrument.ticker}`);
     }
-
-    const updatedAt =
-      typeof result.meta?.regularMarketTime === "number"
-        ? new Date(result.meta.regularMarketTime * 1000).toISOString()
-        : bars.at(-1)?.timestamp ?? new Date().toISOString();
+    const intraday = await fetchYahooBars(remoteSymbol, priceProviderConfig.intradayInterval, priceProviderConfig.intradayRange).catch(() => null);
 
     return normalizePriceSnapshot({
       instrument,
-      source: "yahoo-chart",
-      bars,
-      updatedAt,
+      source: intraday ? "yahoo-chart+intraday" : "yahoo-chart",
+      bars: daily.bars,
+      intradayBars: intraday?.bars,
+      updatedAt: intraday?.updatedAt ?? daily.updatedAt,
       freshnessMode: "live",
-      freshnessNote: `Latest Yahoo chart snapshot for ${remoteSymbol}`,
+      freshnessNote: intraday
+        ? `Latest Yahoo daily + ${priceProviderConfig.intradayInterval} intraday snapshot for ${remoteSymbol}`
+        : `Latest Yahoo daily snapshot for ${remoteSymbol}; intraday tactical fallback unavailable`,
     });
   },
 };
