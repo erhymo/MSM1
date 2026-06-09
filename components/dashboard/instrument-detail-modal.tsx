@@ -18,6 +18,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Modal } from "@/components/ui/modal";
 import { getPositionRisk, readStoredPositions, writeStoredPositions, type ManualPosition, type StoredPositions } from "@/lib/client/position-risk";
+import { getSwingFirstGuidance } from "@/lib/client/swing-guidance";
 import type { AnalysisResult, TacticalAction } from "@/lib/types/analysis";
 import type { AnalysisHistorySeries } from "@/lib/types/firestore";
 import { cn } from "@/lib/utils/cn";
@@ -95,8 +96,8 @@ function getPositionAwareAdvice(analysis: AnalysisResult, hasOpenPosition: boole
 
     if (tacticalAction === "HOLD" || managerGuidance === "HOLD_POSITION" || tacticalAction?.startsWith("ENTER_")) {
       return {
-        title: "Hold posisjonen, men ikke jag mer størrelse",
-        detail: `${ticker} støtter fortsatt eksisterende posisjon bedre enn en aggressiv ny add-on. Følg stop og delgevinst-planen.`,
+        title: "Hold planen, ikke jag mer størrelse",
+        detail: `${ticker} har fortsatt støtte i swing-bildet, men dette er ikke et automatisk påfyll-signal. Følg stop, størrelse og Risk Guard først.`,
         tone: "border-blue-300/25 bg-blue-400/15",
       };
     }
@@ -110,8 +111,8 @@ function getPositionAwareAdvice(analysis: AnalysisResult, hasOpenPosition: boole
 
   if (tacticalAction === "ENTER_LONG" || tacticalAction === "ENTER_SHORT" || managerGuidance === "OPEN_POSITION") {
     return {
-      title: "Kan vurderes for ny inngang",
-      detail: `${ticker} har inngangssignal. Bruk trade manager-størrelse, respekter stop og unngå større risiko enn planen tilsier.`,
+      title: "Watchlist-kandidat, ikke kjøpsordre",
+      detail: `${ticker} har akseptabel timing i modellen, men dere bør bare vurdere trade hvis entry, stop og størrelse er bestemt på forhånd. Ikke jag markedet.`,
       tone: "border-emerald-300/25 bg-emerald-400/15",
     };
   }
@@ -133,8 +134,8 @@ function getPositionAwareAdvice(analysis: AnalysisResult, hasOpenPosition: boole
   }
 
   return {
-    title: "Vent på bedre inngang",
-    detail: `${ticker} har ikke et tydelig nytt inngangssignal akkurat nå. La markedet bekrefte før dere åpner posisjon.`,
+    title: "Vent på bedre bekreftelse",
+    detail: `${ticker} kan fortsatt være interessant på swing-horisont, men modellen gir ikke nok trygg timing til å presse en ny trade nå.`,
     tone: "border-amber-300/25 bg-amber-400/15",
   };
 }
@@ -226,6 +227,7 @@ export function InstrumentDetailModal({ analysis, open, onClose }: InstrumentDet
   const isNoTrade = analysis.signal === "NO_TRADE";
   const positionAdvice = getPositionAwareAdvice(analysis, hasOpenPosition);
   const positionRisk = getPositionRisk(analysis, position);
+  const swingGuidance = getSwingFirstGuidance(analysis, hasOpenPosition);
   const entryNok = formatApproxNokPrice(analysis.entry, analysis);
   const stopNok = isNoTrade ? null : formatApproxNokPrice(analysis.stopLoss, analysis);
   const targetNok = isNoTrade ? null : formatApproxNokPrice(analysis.target, analysis);
@@ -244,8 +246,8 @@ export function InstrumentDetailModal({ analysis, open, onClose }: InstrumentDet
         <section className="grid gap-4 xl:grid-cols-[1.45fr_1fr]">
           <Card className="overflow-hidden p-6">
             <div className="mb-4 flex flex-wrap items-center gap-3">
-              <Badge className={cn("bg-black/10", signalTone[analysis.signal])}>Swing: {SIGNAL_LABELS[analysis.signal]}</Badge>
-              {tactical ? <Badge className={cn("bg-black/10", tacticalTone[tactical.action])}>Action: {TACTICAL_LABELS[tactical.action]}</Badge> : null}
+              <Badge className={cn("bg-black/10", signalTone[analysis.signal])}>Bias: {SIGNAL_LABELS[analysis.signal]}</Badge>
+              {tactical ? <Badge className={cn("bg-black/10", tacticalTone[tactical.action])}>Timing: {TACTICAL_LABELS[tactical.action]}</Badge> : null}
               <Badge className="bg-white/5 text-slate-200">Setup {analysis.setupQuality}</Badge>
               <Badge className="bg-white/5 text-slate-200">{analysis.marketRegime}</Badge>
               <Badge className={analysis.freshness.mode === "fallback" ? "bg-amber-500/10 text-amber-100" : "bg-emerald-500/10 text-emerald-100"}>
@@ -264,6 +266,15 @@ export function InstrumentDetailModal({ analysis, open, onClose }: InstrumentDet
               <p className="mt-3 text-sm leading-6 text-slate-300">{analysis.explanation}</p>
             </div>
 
+            <div className="mt-5 rounded-[28px] border border-cyan-300/15 bg-cyan-400/10 p-5">
+              <p className="text-[11px] uppercase tracking-[0.2em] text-cyan-100/75">MSM1 forklaring</p>
+              <h4 className="mt-2 text-lg font-semibold text-white">{swingGuidance.title}</h4>
+              <p className="mt-3 text-sm leading-6 text-cyan-50/90">{swingGuidance.summary}</p>
+              <ul className="mt-3 space-y-1.5 text-sm leading-6 text-cyan-50/80">
+                {swingGuidance.bullets.map((bullet) => <li key={bullet}>• {bullet}</li>)}
+              </ul>
+            </div>
+
             <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
               <InfoTile label="Trend" value={analysis.trend} icon={TrendingUp} />
               <InfoTile label="COT bias" value={analysis.cotBias} icon={Activity} />
@@ -275,8 +286,8 @@ export function InstrumentDetailModal({ analysis, open, onClose }: InstrumentDet
           <Card className="space-y-5 p-6">
             <div className="flex items-start justify-between gap-4">
               <div>
-                <p className="text-[11px] uppercase tracking-[0.2em] text-slate-400">Execution view</p>
-                <h4 className="mt-2 text-2xl font-semibold tracking-tight text-white">{isNoTrade ? "Stand aside" : "Trade plan"}</h4>
+                <p className="text-[11px] uppercase tracking-[0.2em] text-slate-400">Swing plan & risk</p>
+                <h4 className="mt-2 text-2xl font-semibold tracking-tight text-white">{isNoTrade ? "Observe only" : "Planning view"}</h4>
               </div>
               <Badge className="bg-white/5 text-slate-200">Score {analysis.score}</Badge>
             </div>
@@ -348,7 +359,7 @@ export function InstrumentDetailModal({ analysis, open, onClose }: InstrumentDet
 
               <div className={cn("mt-4 rounded-2xl border p-3", positionAdvice.tone)}>
                 <div className="flex items-center justify-between gap-3">
-                  <p className="text-xs uppercase tracking-[0.16em] text-white/70">Beste tips nå</p>
+                  <p className="text-xs uppercase tracking-[0.16em] text-white/70">Posisjons- og timingnotat</p>
                   <Badge className="bg-black/10 text-white">{hasOpenPosition ? "I posisjon" : "Ingen posisjon"}</Badge>
                 </div>
                 <p className="mt-2 text-base font-semibold text-white">{positionAdvice.title}</p>
@@ -359,10 +370,15 @@ export function InstrumentDetailModal({ analysis, open, onClose }: InstrumentDet
             {tactical ? (
               <div className="rounded-[26px] border border-white/10 bg-white/[0.03] p-4">
                 <div className="flex items-center justify-between gap-3">
-                  <p className="text-xs uppercase tracking-[0.16em] text-slate-400">Tactical · {tactical.horizon}</p>
+                  <p className="text-xs uppercase tracking-[0.16em] text-slate-400">Timing filter · {tactical.horizon}</p>
                   <Badge className={cn("bg-black/10", tacticalTone[tactical.action])}>{TACTICAL_LABELS[tactical.action]}</Badge>
                 </div>
                 <p className="mt-3 text-sm leading-6 text-slate-200">{tactical.reason}</p>
+                <div className="mt-3 rounded-2xl border border-white/10 bg-black/15 p-3">
+                  <p className="text-xs uppercase tracking-[0.14em] text-slate-400">Hva betyr det?</p>
+                  <p className="mt-2 text-sm leading-6 text-slate-200">{swingGuidance.nextStep}</p>
+                  <p className="mt-2 text-xs leading-5 text-amber-100/85">{swingGuidance.riskNote}</p>
+                </div>
                 <div className="mt-4 grid gap-2 sm:grid-cols-3">
                   <TacticalStat label="Score" value={tactical.score} />
                   <TacticalStat label="Confidence" value={tactical.confidence} suffix="%" />
@@ -382,7 +398,7 @@ export function InstrumentDetailModal({ analysis, open, onClose }: InstrumentDet
                     <p className="text-xs uppercase tracking-[0.16em] text-slate-400">Trade manager</p>
                     <p className="mt-1 text-sm text-slate-300">10,000 NOK account · {formatPercent(tradeManager.riskPercent, 1)} risk plan</p>
                   </div>
-                  <Badge className="bg-white/5 text-slate-200">{tradeManager.guidance.replaceAll("_", " ")}</Badge>
+                  <Badge className="bg-white/5 text-slate-200">{formatTradeGuidance(tradeManager.guidance)}</Badge>
                 </div>
                 <p className="mt-3 text-sm leading-6 text-slate-200">{tradeManager.summary}</p>
                 <div className="mt-4 grid gap-2 sm:grid-cols-3">
@@ -609,6 +625,15 @@ function RiskStat({ label, value, secondary, muted = false }: { label: string; v
       {secondary ? <p className="mt-1 text-xs text-slate-500">{secondary}</p> : null}
     </div>
   );
+}
+
+function formatTradeGuidance(guidance: NonNullable<AnalysisResult["tradeManagerPlan"]>["guidance"]) {
+  if (guidance === "OPEN_POSITION") return "Plan size only";
+  if (guidance === "HOLD_POSITION") return "Hold plan";
+  if (guidance === "TAKE_PARTIAL_PROFIT") return "Secure profit";
+  if (guidance === "EXIT_POSITION") return "Reduce risk";
+  if (guidance === "AVOID") return "Avoid risk";
+  return "Wait";
 }
 
 function PositionInput({ label, value, placeholder, onChange }: { label: string; value?: number; placeholder?: string; onChange: (value: string) => void }) {

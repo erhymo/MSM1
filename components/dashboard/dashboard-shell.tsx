@@ -36,8 +36,8 @@ export function DashboardShell({ analyses, statusItems, oilAlert }: DashboardShe
   );
 
   const liveCount = rankedAnalyses.length - fallbackCount;
-  const actionableCount = useMemo(
-    () => rankedAnalyses.filter((item) => item.tacticalSignal?.action === "ENTER_LONG" || item.tacticalSignal?.action === "ENTER_SHORT").length,
+  const bullishSwingCount = useMemo(
+    () => rankedAnalyses.filter((item) => item.signal === "BUY" || item.signal === "STRONG_BUY").length,
     [rankedAnalyses],
   );
   const positionRiskSummary = useMemo(() => {
@@ -61,18 +61,18 @@ export function DashboardShell({ analyses, statusItems, oilAlert }: DashboardShe
             <div className="mb-4 flex flex-wrap items-center gap-3">
               <Badge className="bg-blue-500/10 text-blue-100">MSM1</Badge>
               <Badge className="bg-emerald-500/10 text-emerald-100">{rankedAnalyses.length} instruments</Badge>
-              <Badge className="bg-cyan-500/10 text-cyan-100">{actionableCount} tactical entries</Badge>
+              <Badge className="bg-cyan-500/10 text-cyan-100">{bullishSwingCount} bullish swing</Badge>
               <Badge className={fallbackCount > 0 ? "bg-amber-500/10 text-amber-100" : "bg-emerald-500/10 text-emerald-100"}>
                 {fallbackCount > 0 ? `${fallbackCount} fallback` : "All feeds live"}
               </Badge>
             </div>
             <h1 className="text-3xl font-semibold tracking-tight text-white sm:text-[2.1rem]">Trading dashboard</h1>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-muted">
-              Action-first decision support: tactical entries and risk management lead, while swing bias remains the broader 1–3 week backdrop.
+              Swing-first 1–3 week decision support. Timing and Risk Guard are defensive filters, not automatic buy/sell instructions.
             </p>
 
             <div className="mt-5 grid gap-3 sm:grid-cols-3">
-              <HeaderStat label="Action now" value={String(actionableCount)} detail="Tactical ENTER setups lead the stack before slower swing watchlist ideas." />
+              <HeaderStat label="Bullish swing" value={String(bullishSwingCount)} detail="1–3 week watchlist ideas; timing must still be checked before any manual trade." />
               <HeaderStat label="Live coverage" value={String(liveCount)} detail="Primary providers delivered fresh snapshots." />
               <HeaderStat
                 label="Fallback"
@@ -88,7 +88,7 @@ export function DashboardShell({ analyses, statusItems, oilAlert }: DashboardShe
               <span>{user?.email ?? "Authenticated workspace"}</span>
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
-              <HeaderStat label="Ranking" value="Action first" detail="ENTER first, then HOLD, WAIT, TAKE PROFIT, EXIT and AVOID." compact />
+              <HeaderStat label="Ranking" value="Swing first" detail="Structural 1–3 week bias ranks the list; timing is a defensive filter." compact />
               <HeaderStat
                 label="Cadence"
                 value="3h / weekly"
@@ -148,7 +148,7 @@ export function DashboardShell({ analyses, statusItems, oilAlert }: DashboardShe
             <div className="flex items-center justify-between gap-4">
               <div>
                 <h2 className="text-lg font-semibold text-white">Ranked instruments</h2>
-                <p className="text-sm leading-6 text-muted">Best tactical actions appear first; swing Buy is no longer enough by itself to top the list.</p>
+                <p className="text-sm leading-6 text-muted">Best 1–3 week swing candidates appear first. Timing notes explain whether to wait, reduce risk or avoid adding.</p>
               </div>
               <div className="hidden items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-slate-300 lg:flex">
                 <Activity className="h-3.5 w-3.5 text-cyan-300" />

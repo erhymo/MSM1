@@ -2,6 +2,7 @@ import { Activity, ChevronRight, Clock3, ShieldAlert, Target, TrendingUp } from 
 
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
+import { getSwingFirstGuidance } from "@/lib/client/swing-guidance";
 import type { AnalysisResult, TacticalAction } from "@/lib/types/analysis";
 import { cn } from "@/lib/utils/cn";
 import { formatApproxNokPrice, formatNok, formatPercent, formatPrice, formatRelativeTime, SIGNAL_LABELS, TACTICAL_LABELS } from "@/lib/utils/format";
@@ -86,6 +87,7 @@ export function InstrumentCard({ analysis, onSelect }: InstrumentCardProps) {
   const entryNok = formatApproxNokPrice(analysis.entry, analysis);
   const stopNok = isNoTrade ? null : formatApproxNokPrice(analysis.stopLoss, analysis);
   const targetNok = isNoTrade ? null : formatApproxNokPrice(analysis.target, analysis);
+  const guidance = getSwingFirstGuidance(analysis);
 
   return (
     <button type="button" onClick={() => onSelect(analysis)} className="h-full w-full text-left">
@@ -99,8 +101,8 @@ export function InstrumentCard({ analysis, onSelect }: InstrumentCardProps) {
               <p className="mt-2 text-2xl font-semibold tracking-tight text-white">{analysis.instrument.ticker}</p>
             </div>
             <div className="flex flex-col items-end gap-2 text-right">
-              <Badge className={cn("bg-black/10", tone.badge)}>Swing: {SIGNAL_LABELS[analysis.signal]}</Badge>
-              {tactical ? <Badge className={cn("bg-black/10", tacticalTone[tactical.action])}>Action: {TACTICAL_LABELS[tactical.action]}</Badge> : null}
+              <Badge className={cn("bg-black/10", tone.badge)}>Bias: {SIGNAL_LABELS[analysis.signal]}</Badge>
+              {tactical ? <Badge className={cn("bg-black/10", tacticalTone[tactical.action])}>Timing: {TACTICAL_LABELS[tactical.action]}</Badge> : null}
               <span className="text-[11px] uppercase tracking-[0.18em] text-slate-400">
                 {isNoTrade ? "Stand aside" : `Setup ${analysis.setupQuality}`}
               </span>
@@ -123,21 +125,19 @@ export function InstrumentCard({ analysis, onSelect }: InstrumentCardProps) {
               <div className={cn("h-full rounded-full", confidenceTone)} style={{ width: `${Math.max(8, analysis.confidence)}%` }} />
             </div>
 
-            <p className="mt-3 text-xs leading-5 text-slate-300">
-              {isNoTrade
-                ? "No Trade until conviction and factor alignment improve."
-                : `${analysis.marketRegime} regime with ${analysis.setupQuality} setup quality.`}
+            <p className="mt-3 line-clamp-4 text-xs leading-5 text-slate-300">
+              {guidance.summary}
             </p>
           </div>
 
           {tactical ? (
             <div className="mt-4 rounded-3xl border border-white/10 bg-white/[0.03] p-4">
               <div className="mb-2 flex items-center justify-between gap-3">
-                <p className="text-[11px] uppercase tracking-[0.18em] text-slate-400">Tactical · {tactical.horizon}</p>
+                <p className="text-[11px] uppercase tracking-[0.18em] text-slate-400">Timing filter · {tactical.horizon}</p>
                 <span className="text-xs font-semibold text-white">{tactical.score > 0 ? "+" : ""}{tactical.score}</span>
               </div>
               <p className="text-sm font-medium text-white">{TACTICAL_LABELS[tactical.action]}</p>
-              <p className="mt-1.5 line-clamp-2 text-xs leading-5 text-slate-300">{tactical.reason}</p>
+              <p className="mt-1.5 line-clamp-2 text-xs leading-5 text-slate-300">{guidance.nextStep}</p>
             </div>
           ) : null}
 
@@ -150,7 +150,7 @@ export function InstrumentCard({ analysis, onSelect }: InstrumentCardProps) {
 
           <div className="mt-4 rounded-3xl border border-white/10 bg-white/[0.03] p-4">
             <div className="mb-3 flex items-center justify-between gap-3">
-              <p className="text-[11px] uppercase tracking-[0.18em] text-slate-400">Trade plan</p>
+              <p className="text-[11px] uppercase tracking-[0.18em] text-slate-400">Planning levels</p>
               <p className="text-xs text-slate-400">{isNoTrade ? "Observation only" : `R/R ${analysis.riskReward.toFixed(1)}`}</p>
             </div>
             <div className="grid grid-cols-2 gap-2.5">

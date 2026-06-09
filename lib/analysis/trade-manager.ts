@@ -23,12 +23,12 @@ function getGuidance(analysis: AnalysisResult): TradeManagerGuidance {
 }
 
 function getGuidanceSummary(guidance: TradeManagerGuidance, hasSizing: boolean) {
-  if (guidance === "OPEN_POSITION") return hasSizing ? "Risk-based entry size calculated from the 10,000 NOK account plan." : "Entry is tactically valid, but NOK sizing is unavailable.";
-  if (guidance === "TAKE_PARTIAL_PROFIT") return "Consider securing partial profit and moving stop-loss to break-even.";
-  if (guidance === "EXIT_POSITION") return "Tactical view points to exit rather than holding the swing bias.";
-  if (guidance === "HOLD_POSITION") return "Hold existing exposure, but avoid adding aggressively.";
-  if (guidance === "AVOID") return "Avoid new exposure until data quality or volatility improves.";
-  return "Wait for a cleaner tactical entry before risking capital.";
+  if (guidance === "OPEN_POSITION") return hasSizing ? "Planning size only: if you manually choose this swing setup, keep risk inside the 10,000 NOK account plan." : "Timing is acceptable, but NOK sizing is unavailable; do not trade without a manual risk plan.";
+  if (guidance === "TAKE_PARTIAL_PROFIT") return "Risk-first note: consider securing partial profit or moving stop-loss to break-even rather than adding exposure.";
+  if (guidance === "EXIT_POSITION") return "Risk-first note: short-term conditions argue for reducing exposure, not defending the swing bias blindly.";
+  if (guidance === "HOLD_POSITION") return "Existing exposure may be held if it fits the plan, but avoid adding aggressively.";
+  if (guidance === "AVOID") return "Avoid new exposure until data quality, volatility or timing improves.";
+  return "Wait for cleaner timing and a defined stop before risking capital.";
 }
 
 export function computeTradeManagerPlan(analysis: AnalysisResult): TradeManagerPlan {
