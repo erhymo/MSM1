@@ -23,12 +23,12 @@ function getGuidance(analysis: AnalysisResult): TradeManagerGuidance {
 }
 
 function getGuidanceSummary(guidance: TradeManagerGuidance, hasSizing: boolean) {
-  if (guidance === "OPEN_POSITION") return hasSizing ? "Planning size only: if you manually choose this swing setup, keep risk inside the 10,000 NOK account plan." : "Timing is acceptable, but NOK sizing is unavailable; do not trade without a manual risk plan.";
-  if (guidance === "TAKE_PARTIAL_PROFIT") return "Risk-first note: consider securing partial profit or moving stop-loss to break-even rather than adding exposure.";
-  if (guidance === "EXIT_POSITION") return "Risk-first note: short-term conditions argue for reducing exposure, not defending the swing bias blindly.";
-  if (guidance === "HOLD_POSITION") return "Existing exposure may be held if it fits the plan, but avoid adding aggressively.";
-  if (guidance === "AVOID") return "Avoid new exposure until data quality, volatility or timing improves.";
-  return "Wait for cleaner timing and a defined stop before risking capital.";
+  if (guidance === "OPEN_POSITION") return hasSizing ? "Kun planlagt størrelse: hvis dere selv velger å handle, hold risikoen innenfor planen for 10 000 NOK-kontoen." : "Det korte bildet er greit, men NOK-beregning mangler. Ikke handle uten en manuell risikoplan.";
+  if (guidance === "TAKE_PARTIAL_PROFIT") return "Risiko først: vurder å sikre delgevinst eller flytte stop-loss i stedet for å øke posisjonen.";
+  if (guidance === "EXIT_POSITION") return "Risiko først: det korte bildet taler for å redusere risiko, ikke forsvare hovedretningen blindt.";
+  if (guidance === "HOLD_POSITION") return "Eksisterende posisjon kan holdes hvis den passer planen, men unngå å legge til aggressivt.";
+  if (guidance === "AVOID") return "Unngå ny risiko til data, uro eller kortsiktig bilde blir bedre.";
+  return "Vent på tydeligere bilde og bestemt stop før dere risikerer kapital.";
 }
 
 export function computeTradeManagerPlan(analysis: AnalysisResult): TradeManagerPlan {
@@ -44,8 +44,8 @@ export function computeTradeManagerPlan(analysis: AnalysisResult): TradeManagerP
   const unitLabel = pair?.baseCurrency ? `${pair.baseCurrency} units` : "units";
   const hasSizing = Boolean(nokPerQuote && nokPerQuote > 0 && riskPerUnitQuote > 0 && analysis.signal !== "NO_TRADE");
   const notes = [
-    `Base plan risks ${tradeManagerConfig.riskPercent}% of a ${accountEquityNok.toLocaleString("nb-NO")} NOK account per trade.`,
-    `Do not exceed ${tradeManagerConfig.maxRiskPercent}% risk without a manual override.`,
+    `Grunnplanen risikerer ${tradeManagerConfig.riskPercent}% av en ${accountEquityNok.toLocaleString("nb-NO")} NOK-konto per handel.`,
+    `Ikke gå over ${tradeManagerConfig.maxRiskPercent}% risiko uten en bevisst manuell beslutning.`,
   ];
 
   if (!hasSizing) {
@@ -64,7 +64,7 @@ export function computeTradeManagerPlan(analysis: AnalysisResult): TradeManagerP
         moveStopTo: "BREAK_EVEN",
       },
       summary: getGuidanceSummary(guidance, false),
-      notes: [...notes, "NOK position sizing requires a valid quote-to-NOK conversion and a non-flat stop distance."],
+      notes: [...notes, "Størrelse i NOK krever gyldig valutakurs til NOK og en stop som ikke er lik inngang."],
       source: tradeManagerConfig.source,
     };
   }
@@ -102,7 +102,7 @@ export function computeTradeManagerPlan(analysis: AnalysisResult): TradeManagerP
       estimatedRealizedProfitNok,
     },
     summary: getGuidanceSummary(guidance, true),
-    notes: suggestedUnits < riskBasedUnits ? [...notes, `Size is capped by a conservative ${tradeManagerConfig.maxNotionalLeverage}x notional limit.`] : notes,
+    notes: suggestedUnits < riskBasedUnits ? [...notes, `Størrelsen er begrenset av en forsiktig ${tradeManagerConfig.maxNotionalLeverage}x eksponeringsgrense.`] : notes,
     source: tradeManagerConfig.source,
   };
 }

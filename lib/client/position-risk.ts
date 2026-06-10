@@ -87,7 +87,7 @@ export function writeStoredPositions(positions: StoredPositions) {
 
 export function getPositionRisk(analysis: AnalysisResult, position?: ManualPosition): PositionRisk {
   if (!position?.isOpen) {
-    return { isOpen: false, isComplete: false, missingFields: [], stopLossMissing: false, severity: "ok", title: "Ingen registrert posisjon", detail: "Legg inn posisjon for å aktivere Risk Guard." };
+    return { isOpen: false, isComplete: false, missingFields: [], stopLossMissing: false, severity: "ok", title: "Ingen registrert posisjon", detail: "Legg inn posisjon for å aktivere risikovarsel." };
   }
 
   const missingFields = [
@@ -104,8 +104,8 @@ export function getPositionRisk(analysis: AnalysisResult, position?: ManualPosit
       missingFields,
       stopLossMissing,
       severity: stopLossMissing ? "warning" : "ok",
-      title: stopLossMissing ? "Risk Guard mangler stop-loss" : "Risk Guard trenger mer data",
-      detail: "Legg inn entry, units og helst stop-loss for at appen skal kunne varsle drawdown og R-risiko.",
+      title: stopLossMissing ? "Risikovarsel mangler stop-loss" : "Risikovarsel trenger mer data",
+      detail: "Legg inn inngang, enheter og helst stop-loss for at appen skal kunne varsle når posisjonen går for mye feil vei.",
     };
   }
 
@@ -122,6 +122,7 @@ export function getPositionRisk(analysis: AnalysisResult, position?: ManualPosit
   const severity = drawdownDanger || rDanger || (stopLossMissing && drawdownWarning) ? "danger" : drawdownWarning || rWarning || stopLossMissing ? "warning" : "ok";
   const pair = getInstrumentCurrencyPair(analysis.instrument);
   const pnlLabel = typeof pnlNok === "number" ? `${Math.round(pnlNok).toLocaleString("nb-NO")} NOK` : `${pnlQuote.toFixed(2)} ${pair?.quoteCurrency ?? "quote"}`;
+  const sideLabel = position.side === "BUY" ? "kjøp" : "salg";
 
   return {
     isOpen: true,
@@ -133,8 +134,8 @@ export function getPositionRisk(analysis: AnalysisResult, position?: ManualPosit
     rMultiple,
     stopLossMissing,
     severity,
-    title: severity === "danger" ? "Risk Guard: håndter risiko nå" : severity === "warning" ? "Risk Guard: følg tett" : "Risk Guard: innenfor plan",
-    detail: `${analysis.instrument.ticker} er ${position.side.toLowerCase()} fra ${position.entryPrice}. Estimert P/L er ${pnlLabel}${typeof rMultiple === "number" ? ` (${rMultiple.toFixed(2)}R)` : ""}.${stopLossMissing ? " Stop-loss mangler." : ""}`,
+    title: severity === "danger" ? "Risikovarsel: håndter risiko nå" : severity === "warning" ? "Risikovarsel: følg tett" : "Risikovarsel: innenfor plan",
+    detail: `${analysis.instrument.ticker} er registrert som ${sideLabel} fra ${position.entryPrice}. Estimert P/L er ${pnlLabel}${typeof rMultiple === "number" ? ` (${rMultiple.toFixed(2)}R)` : ""}.${stopLossMissing ? " Stop-loss mangler." : ""}`,
   };
 }
 

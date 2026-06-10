@@ -8,23 +8,23 @@ const nokCurrencyFormatter = new Intl.NumberFormat("nb-NO", {
 });
 
 export const SIGNAL_LABELS: Record<SignalType, string> = {
-  STRONG_BUY: "Strong bullish swing",
-  BUY: "Bullish swing",
-  WAIT: "Wait / observe",
-  HOLD: "Hold / neutral",
-  SELL: "Bearish swing",
-  STRONG_SELL: "Strong bearish swing",
-  NO_TRADE: "No trade",
+  STRONG_BUY: "Tydelig positiv retning",
+  BUY: "Positiv retning",
+  WAIT: "Vent og følg med",
+  HOLD: "Nøytral / hold planen",
+  SELL: "Negativ retning",
+  STRONG_SELL: "Tydelig negativ retning",
+  NO_TRADE: "Ikke handle nå",
 };
 
 export const TACTICAL_LABELS: Record<TacticalAction, string> = {
-  ENTER_LONG: "Timing OK for long",
-  ENTER_SHORT: "Timing OK for short",
-  HOLD: "Timing supports hold",
-  WAIT: "Wait for better timing",
-  TAKE_PROFIT: "Extended / secure profit",
-  EXIT: "Risk rising",
-  AVOID: "Avoid new exposure",
+  ENTER_LONG: "Greit tidspunkt for kjøp",
+  ENTER_SHORT: "Greit tidspunkt for salg",
+  HOLD: "Kan holde planen",
+  WAIT: "Vent på bedre tidspunkt",
+  TAKE_PROFIT: "Vurder å sikre gevinst",
+  EXIT: "Risikoen øker",
+  AVOID: "Unngå ny risiko",
 };
 
 const SIGNAL_SORT_PRIORITY: Record<SignalType, number> = {

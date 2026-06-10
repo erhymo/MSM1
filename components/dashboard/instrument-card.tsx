@@ -101,10 +101,10 @@ export function InstrumentCard({ analysis, onSelect }: InstrumentCardProps) {
               <p className="mt-2 text-2xl font-semibold tracking-tight text-white">{analysis.instrument.ticker}</p>
             </div>
             <div className="flex flex-col items-end gap-2 text-right">
-              <Badge className={cn("bg-black/10", tone.badge)}>Bias: {SIGNAL_LABELS[analysis.signal]}</Badge>
-              {tactical ? <Badge className={cn("bg-black/10", tacticalTone[tactical.action])}>Timing: {TACTICAL_LABELS[tactical.action]}</Badge> : null}
+              <Badge className={cn("bg-black/10", tone.badge)}>Retning: {SIGNAL_LABELS[analysis.signal]}</Badge>
+              {tactical ? <Badge className={cn("bg-black/10", tacticalTone[tactical.action])}>Kort sjekk: {TACTICAL_LABELS[tactical.action]}</Badge> : null}
               <span className="text-[11px] uppercase tracking-[0.18em] text-slate-400">
-                {isNoTrade ? "Stand aside" : `Setup ${analysis.setupQuality}`}
+                {isNoTrade ? "Ikke handle nå" : `Oppsett ${analysis.setupQuality}`}
               </span>
             </div>
           </div>
@@ -112,11 +112,11 @@ export function InstrumentCard({ analysis, onSelect }: InstrumentCardProps) {
           <div className="mt-5 rounded-3xl border border-white/10 bg-black/20 p-4">
             <div className="flex items-end justify-between gap-4">
               <div>
-                <p className="text-[11px] uppercase tracking-[0.18em] text-slate-400">Confidence</p>
+                <p className="text-[11px] uppercase tracking-[0.18em] text-slate-400">Tillit</p>
                 <p className="mt-2 text-3xl font-semibold tracking-tight text-white">{formatPercent(analysis.confidence)}</p>
               </div>
               <div className="text-right">
-                <p className="text-[11px] uppercase tracking-[0.18em] text-slate-400">Score</p>
+                <p className="text-[11px] uppercase tracking-[0.18em] text-slate-400">Poeng</p>
                 <p className="mt-2 text-xl font-semibold text-white">{analysis.score}</p>
               </div>
             </div>
@@ -133,7 +133,7 @@ export function InstrumentCard({ analysis, onSelect }: InstrumentCardProps) {
           {tactical ? (
             <div className="mt-4 rounded-3xl border border-white/10 bg-white/[0.03] p-4">
               <div className="mb-2 flex items-center justify-between gap-3">
-                <p className="text-[11px] uppercase tracking-[0.18em] text-slate-400">Timing filter · {tactical.horizon}</p>
+                <p className="text-[11px] uppercase tracking-[0.18em] text-slate-400">Kort sjekk · {tactical.horizon}</p>
                 <span className="text-xs font-semibold text-white">{tactical.score > 0 ? "+" : ""}{tactical.score}</span>
               </div>
               <p className="text-sm font-medium text-white">{TACTICAL_LABELS[tactical.action]}</p>
@@ -142,34 +142,34 @@ export function InstrumentCard({ analysis, onSelect }: InstrumentCardProps) {
           ) : null}
 
           <div className="mt-4 grid grid-cols-2 gap-3 text-sm text-slate-200">
-            <Metric label="COT bias" value={analysis.cotBias} icon={Activity} />
+            <Metric label="COT-retning" value={analysis.cotBias} icon={Activity} />
             <Metric label="Trend" value={analysis.trend} icon={TrendingUp} />
-            <Metric label="Retail long" value={formatPercent(analysis.retailLong)} icon={ShieldAlert} />
-            <Metric label="Regime" value={analysis.marketRegime} icon={Target} />
+            <Metric label="Småsparere long" value={formatPercent(analysis.retailLong)} icon={ShieldAlert} />
+            <Metric label="Marked" value={analysis.marketRegime} icon={Target} />
           </div>
 
           <div className="mt-4 rounded-3xl border border-white/10 bg-white/[0.03] p-4">
             <div className="mb-3 flex items-center justify-between gap-3">
-              <p className="text-[11px] uppercase tracking-[0.18em] text-slate-400">Planning levels</p>
-              <p className="text-xs text-slate-400">{isNoTrade ? "Observation only" : `R/R ${analysis.riskReward.toFixed(1)}`}</p>
+              <p className="text-[11px] uppercase tracking-[0.18em] text-slate-400">Planlagte nivåer</p>
+              <p className="text-xs text-slate-400">{isNoTrade ? "Bare følg med" : `Risiko/gevinst ${analysis.riskReward.toFixed(1)}`}</p>
             </div>
             <div className="grid grid-cols-2 gap-2.5">
-              <TradeMetric label="Entry" value={formatPrice(analysis.entry)} secondaryValue={entryNok} />
+              <TradeMetric label="Inngang" value={formatPrice(analysis.entry)} secondaryValue={entryNok} />
               <TradeMetric label="Stop" value={isNoTrade ? "—" : formatPrice(analysis.stopLoss)} secondaryValue={stopNok} muted={isNoTrade} />
-              <TradeMetric label="Target" value={isNoTrade ? "—" : formatPrice(analysis.target)} secondaryValue={targetNok} muted={isNoTrade} />
-              <TradeMetric label="Risk / reward" value={isNoTrade ? "Flat" : analysis.riskReward.toFixed(1)} muted={isNoTrade} />
+              <TradeMetric label="Mål" value={isNoTrade ? "—" : formatPrice(analysis.target)} secondaryValue={targetNok} muted={isNoTrade} />
+              <TradeMetric label="Risiko/gevinst" value={isNoTrade ? "Avvent" : analysis.riskReward.toFixed(1)} muted={isNoTrade} />
             </div>
           </div>
 
           {tradeManager ? (
             <div className="mt-4 rounded-3xl border border-white/10 bg-black/15 p-4">
               <div className="mb-3 flex items-center justify-between gap-3">
-                <p className="text-[11px] uppercase tracking-[0.18em] text-slate-400">Risk manager</p>
-                <p className="text-xs text-slate-400">{formatPercent(tradeManager.riskPercent, 1)} risk</p>
+                <p className="text-[11px] uppercase tracking-[0.18em] text-slate-400">Risikoplan</p>
+                <p className="text-xs text-slate-400">{formatPercent(tradeManager.riskPercent, 1)} risiko</p>
               </div>
               <div className="grid grid-cols-2 gap-2.5">
-                <TradeMetric label="Max risk" value={formatNok(tradeManager.riskAmountNok)} />
-                <TradeMetric label="Size" value={formatUnits(tradeManager.suggestedUnits)} muted={!tradeManager.suggestedUnits} />
+                <TradeMetric label="Maks risiko" value={formatNok(tradeManager.riskAmountNok)} />
+                <TradeMetric label="Størrelse" value={formatUnits(tradeManager.suggestedUnits)} muted={!tradeManager.suggestedUnits} />
               </div>
               <p className="mt-3 line-clamp-2 text-xs leading-5 text-slate-300">{tradeManager.summary}</p>
             </div>
@@ -179,10 +179,10 @@ export function InstrumentCard({ analysis, onSelect }: InstrumentCardProps) {
             <div className="flex items-center justify-between text-slate-200">
               <span className="flex items-center gap-2 text-slate-300">
                 <Clock3 className="h-4 w-4" />
-                Updated {formatRelativeTime(analysis.updatedAt)}
+                Oppdatert {formatRelativeTime(analysis.updatedAt)}
               </span>
               <span className="inline-flex items-center gap-1 text-slate-400 transition group-hover:text-slate-200">
-                Details
+                Detaljer
                 <ChevronRight className="h-4 w-4 transition group-hover:translate-x-0.5" />
               </span>
             </div>

@@ -83,21 +83,21 @@ function getSwingComponent(signal: SignalType, score: number, confidence: number
 }
 
 function getReason(action: TacticalSignal["action"], direction: number, stretchInAtr: number, components: TacticalSignal["components"]) {
-  const side = direction > 0 ? "bullish" : direction < 0 ? "bearish" : "neutral";
+  const side = direction > 0 ? "positiv" : direction < 0 ? "negativ" : "nøytral";
   const momentumAligned = direction !== 0 && components.momentum4h * direction >= 15;
   const dailyAligned = direction !== 0 && components.dailyAlignment * direction >= 15;
   const stretched = direction !== 0 && stretchInAtr >= 1.15;
 
-  if (action === "AVOID") return "Tactical timing is unreliable because price data or volatility conditions are not clean enough.";
-  if (action === "TAKE_PROFIT") return `Swing remains ${side}, but the move is stretched versus recent ATR; consider securing gains rather than adding.`;
-  if (action === "EXIT") return `Short-term momentum is now working against the ${side} swing bias.`;
-  if (action === "ENTER_LONG" || action === "ENTER_SHORT") return `High-conviction entry: swing bias, 4H momentum and daily structure are aligned without a stretched price.`;
-  if (action === "HOLD") return `Swing bias is still ${side}; tactical conditions support holding more than adding aggressively.`;
-  if (!direction) return "No clear swing edge yet, so tactical layer stays patient.";
-  if (!momentumAligned) return `Swing is ${side}, but 4H momentum has not confirmed a fresh entry.`;
-  if (!dailyAligned) return `4H timing is improving, but daily structure is not fully aligned yet.`;
-  if (stretched) return `Swing is ${side}, but price is already stretched versus recent ATR.`;
-  return "Setup is close, but tactical confirmation is not strong enough for a fresh entry.";
+  if (action === "AVOID") return "Den korte sjekken er usikker fordi prisdata eller uro i markedet ikke er god nok.";
+  if (action === "TAKE_PROFIT") return `Hovedretningen er fortsatt ${side}, men prisen har gått langt på kort tid. Vurder å sikre gevinst fremfor å legge til.`;
+  if (action === "EXIT") return `Den korte utviklingen går nå mot hovedretningen, som er ${side}.`;
+  if (action === "ENTER_LONG" || action === "ENTER_SHORT") return "Hovedretning, kort fart og daglig bilde peker samme vei uten at prisen virker for strukket.";
+  if (action === "HOLD") return `Hovedretningen er fortsatt ${side}; det korte bildet støtter å holde mer enn å legge til aggressivt.`;
+  if (!direction) return "Ingen tydelig hovedretning ennå, så appen bør være tålmodig.";
+  if (!momentumAligned) return `Hovedretningen er ${side}, men den korte farten har ikke bekreftet en ny inngang.`;
+  if (!dailyAligned) return "Det korte bildet bedrer seg, men daglig retning er ikke tydelig nok ennå.";
+  if (stretched) return `Hovedretningen er ${side}, men prisen virker allerede strukket.`;
+  return "Oppsettet er nært, men bekreftelsen er ikke sterk nok for ny handel.";
 }
 
 export function computeTacticalSignal({ price, volatility, swingSignal, swingScore, swingConfidence, marketRegime }: TacticalInput): TacticalSignal {

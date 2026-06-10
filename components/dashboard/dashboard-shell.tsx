@@ -36,7 +36,7 @@ export function DashboardShell({ analyses, statusItems, oilAlert }: DashboardShe
   );
 
   const liveCount = rankedAnalyses.length - fallbackCount;
-  const bullishSwingCount = useMemo(
+  const positiveDirectionCount = useMemo(
     () => rankedAnalyses.filter((item) => item.signal === "BUY" || item.signal === "STRONG_BUY").length,
     [rankedAnalyses],
   );
@@ -61,18 +61,18 @@ export function DashboardShell({ analyses, statusItems, oilAlert }: DashboardShe
             <div className="mb-4 flex flex-wrap items-center gap-3">
               <Badge className="bg-blue-500/10 text-blue-100">MSM1</Badge>
               <Badge className="bg-emerald-500/10 text-emerald-100">{rankedAnalyses.length} instruments</Badge>
-              <Badge className="bg-cyan-500/10 text-cyan-100">{bullishSwingCount} bullish swing</Badge>
+              <Badge className="bg-cyan-500/10 text-cyan-100">{positiveDirectionCount} positive</Badge>
               <Badge className={fallbackCount > 0 ? "bg-amber-500/10 text-amber-100" : "bg-emerald-500/10 text-emerald-100"}>
                 {fallbackCount > 0 ? `${fallbackCount} fallback` : "All feeds live"}
               </Badge>
             </div>
             <h1 className="text-3xl font-semibold tracking-tight text-white sm:text-[2.1rem]">Trading dashboard</h1>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-muted">
-              Swing-first 1–3 week decision support. Timing and Risk Guard are defensive filters, not automatic buy/sell instructions.
+              Vurdering for de neste 1–3 ukene. Den korte sjekken og risikovarselet skal hjelpe dere å vente, redusere risiko eller la være å handle.
             </p>
 
             <div className="mt-5 grid gap-3 sm:grid-cols-3">
-              <HeaderStat label="Bullish swing" value={String(bullishSwingCount)} detail="1–3 week watchlist ideas; timing must still be checked before any manual trade." />
+              <HeaderStat label="Positiv retning" value={String(positiveDirectionCount)} detail="Par appen mener er interessante å følge de neste 1–3 ukene. Sjekk alltid risiko før handel." />
               <HeaderStat label="Live coverage" value={String(liveCount)} detail="Primary providers delivered fresh snapshots." />
               <HeaderStat
                 label="Fallback"
@@ -88,7 +88,7 @@ export function DashboardShell({ analyses, statusItems, oilAlert }: DashboardShe
               <span>{user?.email ?? "Authenticated workspace"}</span>
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
-              <HeaderStat label="Ranking" value="Swing first" detail="Structural 1–3 week bias ranks the list; timing is a defensive filter." compact />
+              <HeaderStat label="Sortering" value="Neste uker først" detail="Listen rangeres etter hovedretningen for 1–3 uker. Kort sjekk brukes som brems." compact />
               <HeaderStat
                 label="Cadence"
                 value="3h / weekly"
@@ -127,17 +127,17 @@ export function DashboardShell({ analyses, statusItems, oilAlert }: DashboardShe
           <section className="rounded-[28px] border border-amber-300/20 bg-amber-500/10 p-5">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
               <div>
-                <p className="text-[11px] uppercase tracking-[0.2em] text-amber-100/80">Position Risk Guard</p>
+                <p className="text-[11px] uppercase tracking-[0.2em] text-amber-100/80">Risikovarsel</p>
                 <h2 className="mt-2 text-xl font-semibold text-white">
                   {positionRiskSummary.dangerCount > 0 ? "Åpne posisjoner trenger handling" : "Åpne posisjoner overvåkes"}
                 </h2>
                 <p className="mt-2 text-sm leading-6 text-amber-50/85">
-                  {positionRiskSummary.openCount} registrerte posisjoner · {positionRiskSummary.dangerCount} danger · {positionRiskSummary.warningCount} warning · estimert P/L {formatNok(positionRiskSummary.totalPnlNok)}
+                  {positionRiskSummary.openCount} registrerte posisjoner · {positionRiskSummary.dangerCount} alvorlig · {positionRiskSummary.warningCount} følg med · estimert P/L {formatNok(positionRiskSummary.totalPnlNok)}
                   {positionRiskSummary.concentration ? ` · største valutaeksponering: ${positionRiskSummary.concentration[0]} (${positionRiskSummary.concentration[1] > 0 ? "+" : ""}${positionRiskSummary.concentration[1]})` : ""}
                 </p>
               </div>
               <Badge className={positionRiskSummary.dangerCount > 0 ? "bg-rose-500/20 text-rose-50" : "bg-amber-500/20 text-amber-50"}>
-                {positionRiskSummary.dangerCount > 0 ? "Risk alert" : "Watch positions"}
+                {positionRiskSummary.dangerCount > 0 ? "Håndter risiko" : "Følg posisjoner"}
               </Badge>
             </div>
           </section>
@@ -147,12 +147,12 @@ export function DashboardShell({ analyses, statusItems, oilAlert }: DashboardShe
           <section className="space-y-4">
             <div className="flex items-center justify-between gap-4">
               <div>
-                <h2 className="text-lg font-semibold text-white">Ranked instruments</h2>
-                <p className="text-sm leading-6 text-muted">Best 1–3 week swing candidates appear first. Timing notes explain whether to wait, reduce risk or avoid adding.</p>
+                <h2 className="text-lg font-semibold text-white">Rangerte valutapar</h2>
+                <p className="text-sm leading-6 text-muted">Parene appen liker best for de neste 1–3 ukene vises først. Forklaringene sier om dere bør vente, redusere risiko eller la være å legge til.</p>
               </div>
               <div className="hidden items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-slate-300 lg:flex">
                 <Activity className="h-3.5 w-3.5 text-cyan-300" />
-                Presentation ranking applied client-side
+                Sortering gjort i appen
               </div>
             </div>
             <InstrumentGrid analyses={rankedAnalyses} onSelect={setSelected} />
